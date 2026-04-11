@@ -290,7 +290,6 @@ impl VulkanContext {
             let command_buffer = self.command_buffer;
             let command_buffers = &[command_buffer];
 
-            // 👇 RESET + BEGIN
             self.device.reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty()).unwrap();
 
             self.device.begin_command_buffer(
@@ -298,7 +297,6 @@ impl VulkanContext {
                 &vk::CommandBufferBeginInfo::default()
             ).unwrap();
 
-            // 👇 CLEAR COLOR
             let clear_values = [vk::ClearValue {
                 color: vk::ClearColorValue {
                     float32: [0.1, 0.2, 0.3, 1.0]
@@ -329,7 +327,7 @@ impl VulkanContext {
             let submit_info = vk::SubmitInfo::default()
                 .wait_semaphores(wait_semaphores)
                 .wait_dst_stage_mask(wait_stages)
-                .command_buffers(command_buffers) // 👈 ВОТ ЭТО РЕШАЕТ ВСЁ
+                .command_buffers(command_buffers)
                 .signal_semaphores(signal_semaphores);
 
             self.device.queue_submit(self.queue, &[submit_info], self.in_flight).unwrap();
