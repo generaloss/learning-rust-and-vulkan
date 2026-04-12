@@ -49,15 +49,24 @@ impl Context {
 
     pub fn render(&mut self) {
         if let Some(vulkan) = self.vulkan.as_mut() {
-            vulkan.render();
+            if let Some(window) = self.window.as_mut() {
+                vulkan.render(window);
+            }
         }
-
         if let Some(app) = self.app.as_mut() {
             app.render();
         }
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
+        if width < 1 || height < 1 {
+            return;
+        }
+
+        if let Some(vulkan) = self.vulkan.as_mut() {
+            vulkan.resize_event();
+        }
+
         if let Some(app) = self.app.as_mut() {
             app.resize(width, height);
         }
