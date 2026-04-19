@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use winit::application::ApplicationHandler;
 use winit::error::EventLoopError;
 use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::WindowId;
 use crate::engine::context::Context;
 
@@ -34,6 +34,8 @@ impl ContextManager {
 impl ApplicationHandler for ContextManager {
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        event_loop.set_control_flow(ControlFlow::Poll);
+
         for mut context in self.pending.drain(..) {
             context.init(event_loop);
 
@@ -46,6 +48,12 @@ impl ApplicationHandler for ContextManager {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
         if let Some(context) = self.contexts.get_mut(&window_id) {
             match event {
+                WindowEvent::Resized(size) => {
+                    context.resize(size.width, size.height);
+                }
+                WindowEvent::RedrawRequested => {
+                    context.render();
+                }
                 WindowEvent::CloseRequested => {
                     context.shutdown();
                     self.contexts.remove(&window_id);
@@ -53,12 +61,6 @@ impl ApplicationHandler for ContextManager {
                     if self.contexts.is_empty() {
                         event_loop.exit();
                     }
-                }
-                WindowEvent::Resized(size) => {
-                    context.resize(size.width, size.height);
-                }
-                WindowEvent::RedrawRequested => {
-                    context.render();
                 }
                 _ => {}
             }

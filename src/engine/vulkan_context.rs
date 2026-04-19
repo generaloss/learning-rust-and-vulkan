@@ -181,6 +181,13 @@ impl VulkanContext {
 
     fn create_swapchain(&mut self, window: &Window, old: vk::SwapchainKHR) {
         unsafe {
+            self.device.device_wait_idle().unwrap();
+
+            let size = window.inner_size();
+            if size.width == 0 || size.height == 0 {
+                return;
+            }
+
             let caps = self.surface_loader
                 .get_physical_device_surface_capabilities(self.physical_device, self.surface)
                 .unwrap();
@@ -188,8 +195,6 @@ impl VulkanContext {
             let format = self.surface_loader
                 .get_physical_device_surface_formats(self.physical_device, self.surface)
                 .unwrap()[0];
-
-            let size = window.inner_size();
 
             let extent = if caps.current_extent.width != u32::MAX {
                 caps.current_extent
@@ -202,8 +207,23 @@ impl VulkanContext {
 
             self.extent = extent;
 
-            let image_count = (caps.min_image_count + 1)
-                .min(caps.max_image_count.max(caps.min_image_count + 1));
+            // triple buffering
+            let image_count = (caps.min_image_count + 2)
+                .min(caps.max_image_count.max(caps.min_image_count + 2));
+
+            // present mode
+            // let present_modes = self.surface_loader
+            //     .get_physical_device_surface_present_modes(self.physical_device, self.surface)
+            //     .unwrap();
+
+            // let present_mode = if present_modes.contains(&vk::PresentModeKHR::MAILBOX) {
+            //     vk::PresentModeKHR::MAILBOX
+            // } else {
+            //     vk::PresentModeKHR::FIFO
+            // };
+            let present_mode = vk::PresentModeKHR::MAILBOX;
+
+            println!("PRESENT MODE={}", present_mode.as_raw());
 
             let new_swapchain = self.swapchain_loader.create_swapchain(
                 &vk::SwapchainCreateInfoKHR::default()
@@ -217,7 +237,7 @@ impl VulkanContext {
                     .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
                     .pre_transform(caps.current_transform)
                     .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-                    .present_mode(vk::PresentModeKHR::FIFO)
+                    .present_mode(present_mode)
                     .clipped(true)
                     .old_swapchain(old),
                 None
@@ -312,6 +332,26 @@ impl VulkanContext {
         unsafe {
             let frame = &self.frames[self.current_frame];
 
+            // resize
+            if self.needs_resize {
+                let size = window.inner_size();
+                if size.width == 0 || size.height == 0 {
+                    return;
+                }
+
+                self.needs_resize = false;
+                self.create_swapchain(window, self.swapchain);
+                return;
+            }
+
+            // fence
+            if self.device.get_fence_status(frame.fence).unwrap() == false {
+                self.current_frame = (self.current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+                return;
+            }
+            self.device.reset_fences(&[frame.fence]).unwrap();
+
+            // next image index
             let (image_index, _) = match self.swapchain_loader.acquire_next_image(
                 self.swapchain,
                 u64::MAX,
@@ -320,73 +360,63 @@ impl VulkanContext {
             ) {
                 Ok(r) => r,
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                    // was resized during acquire
                     self.create_swapchain(window, self.swapchain);
                     return;
                 }
-                Err(e) => panic!("{:?}", e),
+                Err(e) => panic!("Acquire failed: {:?}", e),
             };
 
-            self.device.wait_for_fences(&[frame.fence], true, u64::MAX).unwrap();
-            self.device.reset_fences(&[frame.fence]).unwrap();
-
+            // render commands
             let cmd = frame.cmd;
-
             self.device.reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty()).unwrap();
-
             self.device.begin_command_buffer(cmd, &vk::CommandBufferBeginInfo::default()).unwrap();
-
-            let clear = [vk::ClearValue {
-                color: vk::ClearColorValue { float32: [0.1, 0.2, 0.3, 1.0] }
-            }];
-
+            let clear = [vk::ClearValue { color: vk::ClearColorValue { float32: [0.1, 0.2, 0.3, 1.0] } }];
             self.device.cmd_begin_render_pass(
                 cmd,
                 &vk::RenderPassBeginInfo::default()
                     .render_pass(self.render_pass)
                     .framebuffer(self.framebuffers[image_index as usize])
-                    .render_area(vk::Rect2D {
-                        offset: vk::Offset2D { x: 0, y: 0 },
-                        extent: self.extent,
-                    })
+                    .render_area(vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent: self.extent })
                     .clear_values(&clear),
                 vk::SubpassContents::INLINE
             );
-
+            // draw custom scenes...
             self.device.cmd_end_render_pass(cmd);
             self.device.end_command_buffer(cmd).unwrap();
 
+            // submit
             let wait_semaphores = [frame.image_available];
             let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
             let signal_semaphores = [frame.render_finished];
             let cmd_bufs = [cmd];
-
             let submit_info = vk::SubmitInfo::default()
                 .wait_semaphores(&wait_semaphores)
                 .wait_dst_stage_mask(&wait_stages)
                 .command_buffers(&cmd_bufs)
                 .signal_semaphores(&signal_semaphores);
-
             self.device.queue_submit(self.queue, &[submit_info], frame.fence).unwrap();
 
-            let swapchains = &[self.swapchain];
-            let image_indices = &[image_index];
-
+            // present
+            let swapchains = [self.swapchain];
+            let image_indices = [image_index];
             let present_info = vk::PresentInfoKHR::default()
                 .wait_semaphores(&signal_semaphores)
-                .swapchains(swapchains)
-                .image_indices(image_indices);
+                .swapchains(&swapchains)
+                .image_indices(&image_indices);
 
             match self.swapchain_loader.queue_present(self.queue, &present_info) {
-                Ok(_) => {}
+                Ok(_) => { }
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR)
                 | Err(vk::Result::SUBOPTIMAL_KHR) => {
+                    // was resized during present
                     self.create_swapchain(window, self.swapchain);
                 }
-                Err(e) => panic!("{:?}", e),
+                Err(e) => panic!("Present failed: {:?}", e),
             }
 
+            // next frame
             self.current_frame = (self.current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
-
             self.cleanup_old();
         }
     }

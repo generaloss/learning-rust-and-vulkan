@@ -37,8 +37,6 @@ impl Context {
         // create vulkan context
         let vulkan = VulkanContext::new(&window);
         self.vulkan = Some(vulkan);
-
-        // move
         self.window = Some(window);
 
         // init()
@@ -48,11 +46,13 @@ impl Context {
     }
 
     pub fn render(&mut self) {
-        if let Some(vulkan) = self.vulkan.as_mut() {
-            if let Some(window) = self.window.as_mut() {
+        if let Some(window) = self.window.as_mut() {
+            if let Some(vulkan) = self.vulkan.as_mut() {
                 vulkan.render(window);
             }
         }
+
+
         if let Some(app) = self.app.as_mut() {
             app.render();
         }
@@ -73,7 +73,6 @@ impl Context {
     }
 
     pub fn shutdown(&mut self) {
-        // shutdown()
         if let Some(app) = self.app.as_mut() {
             app.shutdown();
         }
