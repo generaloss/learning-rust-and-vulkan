@@ -1,3 +1,6 @@
+// 'context.rs'
+
+use std::sync::Arc;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes};
 use crate::engine::app_adapter::AppAdapter;
@@ -5,7 +8,7 @@ use crate::engine::vulkan_context::VulkanContext;
 
 pub struct Context {
     window_attributes: WindowAttributes,
-    pub window: Option<Window>,
+    pub window: Option<Arc<Window>>,
     pub app: Option<Box<dyn AppAdapter>>,
     pub vulkan: Option<VulkanContext>
 }
@@ -32,29 +35,22 @@ impl Context {
     pub fn init(&mut self, event_loop: &ActiveEventLoop) {
         // create window
         let attributes = self.window_attributes.clone();
-        let window = event_loop.create_window(attributes).unwrap();
+        let window = Arc::new(event_loop.create_window(attributes).unwrap());
 
         // create vulkan context
-        let vulkan = VulkanContext::new(&window);
+        let vulkan = VulkanContext::new(window.clone());
         self.vulkan = Some(vulkan);
         self.window = Some(window);
 
         // init()
-        if let Some(app) = self.app.as_mut() {
-            app.init();
+        if let (Some(app), Some(vulkan)) = (self.app.as_mut(), self.vulkan.as_mut()) {
+            app.init(vulkan);
         }
     }
 
     pub fn render(&mut self) {
-        if let Some(window) = self.window.as_mut() {
-            if let Some(vulkan) = self.vulkan.as_mut() {
-                vulkan.render(window);
-            }
-        }
-
-
-        if let Some(app) = self.app.as_mut() {
-            app.render();
+        if let (Some(window), Some(vulkan), Some(app)) = (self.window.as_mut(), self.vulkan.as_mut(), self.app.as_mut()) {
+            vulkan.render(window, app);
         }
     }
 
@@ -64,7 +60,7 @@ impl Context {
         }
 
         if let Some(vulkan) = self.vulkan.as_mut() {
-            vulkan.resize_event();
+            vulkan.resize_event(width, height);
         }
 
         if let Some(app) = self.app.as_mut() {

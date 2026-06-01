@@ -5,13 +5,19 @@ edition = "2024"
 
 [dependencies]
 winit = "0.30.13"
-ash = { version = "0.38.0+1.3.281", features = ["linked"] }
-ash-window = "0.13.0"
-raw-window-handle = "0.6.2"
+vulkano = { version = "0.35.2", features = ["macros"]}
+vulkano-shaders = "0.35.0"
 
+# bytemuck = { version = "1.14", features = ["derive"] }
+# raw-window-handle = "0.6.2"
 # log = "0.4.29"
 # env_logger = "0.11.10"
 # cgmath = "0.18.0"
 # image = "0.25.10"
 # tobj = "4.0.3"
 # ahash = "0.8.12"
+# ash = { version = "0.38.0+1.3.281", features = ["linked"] }
+# ash-window = "0.13.0"
+
+[profile.dev]
+opt-level = 1

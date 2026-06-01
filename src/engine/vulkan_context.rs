@@ -1,423 +1,282 @@
-use ash;
-use ash::vk;
-use ash::khr::{surface, swapchain};
+// 'vulkan_context.rs'
 
-use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use std::sync::Arc;
+use vulkano::VulkanLibrary;
+use vulkano::command_buffer::allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, RenderingAttachmentInfo, RenderingInfo};
+use vulkano::device::physical::{PhysicalDeviceType};
+use vulkano::device::{Device, DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo, QueueFlags, DeviceFeatures};
+use vulkano::image::view::ImageView;
+use vulkano::image::{Image, ImageUsage};
+use vulkano::instance::{Instance, InstanceCreateFlags, InstanceCreateInfo};
+use vulkano::swapchain::{Surface, Swapchain, SwapchainCreateInfo, SwapchainPresentInfo, PresentMode};
+use vulkano::sync::{self, GpuFuture};
 use winit::window::Window;
-
-const MAX_FRAMES_IN_FLIGHT: usize = 2;
-
-struct FrameData {
-    cmd: vk::CommandBuffer,
-    image_available: vk::Semaphore,
-    render_finished: vk::Semaphore,
-    fence: vk::Fence,
-}
-
-struct OldSwapchain {
-    swapchain: vk::SwapchainKHR,
-    image_views: Vec<vk::ImageView>,
-    framebuffers: Vec<vk::Framebuffer>,
-    render_pass: vk::RenderPass,
-}
+use vulkano::memory::allocator::StandardMemoryAllocator;
+use vulkano::pipeline::graphics::viewport::Viewport;
+use crate::engine::app_adapter::AppAdapter;
 
 pub struct VulkanContext {
-    needs_resize: bool,
-
-    entry: ash::Entry,
-    instance: ash::Instance,
-    surface_loader: surface::Instance,
-    surface: vk::SurfaceKHR,
-
-    device: ash::Device,
-    physical_device: vk::PhysicalDevice,
-    queue: vk::Queue,
-    queue_family_index: u32,
-
-    swapchain_loader: swapchain::Device,
-    swapchain: vk::SwapchainKHR,
-
-    images: Vec<vk::Image>,
-    image_views: Vec<vk::ImageView>,
-    framebuffers: Vec<vk::Framebuffer>,
-    render_pass: vk::RenderPass,
-    extent: vk::Extent2D,
-
-    frames: Vec<FrameData>,
-    current_frame: usize,
-
-    command_pool: vk::CommandPool,
-
-    old_swapchains: Vec<OldSwapchain>,
+    pub instance: Arc<Instance>,
+    pub surface: Arc<Surface>,
+    pub device: Arc<Device>,
+    pub queue: Arc<Queue>,
+    pub swapchain: Arc<Swapchain>,
+    pub images: Vec<Arc<Image>>,
+    pub image_views: Vec<Arc<ImageView>>,
+    pub cb_allocator: Arc<StandardCommandBufferAllocator>,
+    pub memory_allocator: Arc<StandardMemoryAllocator>,
+    pub image_format: vulkano::format::Format,
 }
 
 impl VulkanContext {
+    pub fn new(window: Arc<Window>) -> Self {
+        // 1. Загрузка библиотеки
+        let library = VulkanLibrary::new().expect("no local Vulkan library");
+        // 2. Расширения инстанса, нужные для winit окна
+        let required_extensions = Surface::required_extensions(&window).unwrap();
 
-    pub fn new(window: &Window) -> Self {
-        unsafe {
-            let entry = ash::Entry::linked();
+        let instance = Instance::new(
+            library,
+            InstanceCreateInfo {
+                flags: InstanceCreateFlags::ENUMERATE_PORTABILITY,
+                enabled_extensions: required_extensions,
+                ..Default::default()
+            },
+        ).expect("failed to create instance");
 
-            let app_info = vk::ApplicationInfo::default()
-                .api_version(vk::API_VERSION_1_3);
+        // 3. Создаем Surface
+        let surface = Surface::from_window(instance.clone(), window.clone())
+            .expect("failed to create surface");
 
-            let raw_display = window.display_handle().unwrap().as_raw();
-            let extensions = ash_window::enumerate_required_extensions(raw_display).unwrap();
+        // 4. Выбираем физическое устройство
+        let device_extensions = DeviceExtensions {
+            khr_swapchain: true,
+            ..DeviceExtensions::empty()
+        };
 
-            let instance = entry.create_instance(
-                &vk::InstanceCreateInfo::default()
-                    .application_info(&app_info)
-                    .enabled_extension_names(extensions),
-                None
-            ).unwrap();
+        // Ищем дискретную видеокарту с поддержкой графической очереди и swapchain
+        let (physical_device, queue_family_index) = instance
+            .enumerate_physical_devices()
+            .expect("failed to enumerate physical devices")
+            .filter(|p| p.supported_extensions().contains(&device_extensions))
+            .filter_map(|p| {
+                p.queue_family_properties()
+                    .iter()
+                    .enumerate()
+                    .position(|(i, q)| q.queue_flags.contains(QueueFlags::GRAPHICS) && p.surface_support(i as u32, &surface).unwrap_or(false))
+                    .map(|i| (p, i as u32))
+            })
+            .min_by_key(|(p, _)| {
+                // Приоритет дискретным видеокартам
+                match p.properties().device_type {
+                    PhysicalDeviceType::DiscreteGpu => 0,
+                    PhysicalDeviceType::IntegratedGpu => 1,
+                    PhysicalDeviceType::VirtualGpu => 2,
+                    PhysicalDeviceType::Cpu => 3,
+                    PhysicalDeviceType::Other => 4,
+                    _ => 5,
+                }
+            })
+            .expect("no suitable physical device found");
 
-            let raw_window = window.window_handle().unwrap().as_raw();
+        // 5. Создаем логическое устройство
+        // Включаем фичу dynamic_rendering (требует Vulkan 1.3+ на уровне драйвера)
+        let mut device_features = DeviceFeatures::empty();
+        device_features.dynamic_rendering = true;
 
-            let surface = ash_window::create_surface(
-                &entry,
-                &instance,
-                raw_display,
-                raw_window,
-                None
-            ).unwrap();
+        let (device, mut queues) = Device::new(
+            physical_device,
+            DeviceCreateInfo {
+                queue_create_infos: vec![QueueCreateInfo {
+                    queue_family_index,
+                    ..Default::default()
+                }],
+                enabled_extensions: device_extensions,
+                enabled_features: device_features,
+                ..Default::default()
+            },
+        ).expect("failed to create device");
 
-            let surface_loader = surface::Instance::new(&entry, &instance);
+        let queue = queues.next().unwrap();
 
-            let physical_device = instance.enumerate_physical_devices().unwrap()[0];
+        // 6. Создаем Swapchain
+        let surface_capabilities = device
+            .physical_device()
+            .surface_capabilities(&surface, Default::default())
+            .expect("failed to get surface capabilities");
 
-            let queue_family_index = instance
-                .get_physical_device_queue_family_properties(physical_device)
-                .iter()
-                .enumerate()
-                .find(|(i, q)| {
-                    q.queue_flags.contains(vk::QueueFlags::GRAPHICS)
-                        && surface_loader
-                        .get_physical_device_surface_support(physical_device, *i as u32, surface)
-                        .unwrap()
-                })
-                .map(|(i, _)| i as u32)
-                .unwrap();
+        let image_format = device
+            .physical_device()
+            .surface_formats(&surface, Default::default())
+            .expect("failed to get surface formats")[0].0;
 
-            let priorities = [1.0];
-            let device = instance.create_device(
-                physical_device,
-                &vk::DeviceCreateInfo::default()
-                    .enabled_extension_names(&[swapchain::NAME.as_ptr()])
-                    .queue_create_infos(&[
-                        vk::DeviceQueueCreateInfo::default()
-                            .queue_family_index(queue_family_index)
-                            .queue_priorities(&priorities)
-                    ]),
-                None
-            ).unwrap();
+        let window_size = window.inner_size();
 
-            let queue = device.get_device_queue(queue_family_index, 0);
+        let (swapchain, images) = Swapchain::new(
+            device.clone(),
+            surface.clone(),
+            SwapchainCreateInfo {
+                min_image_count: surface_capabilities.min_image_count.max(2),
+                image_format,
+                image_extent: [window_size.width, window_size.height],
+                image_usage: ImageUsage::COLOR_ATTACHMENT,
+                composite_alpha: surface_capabilities.supported_composite_alpha.into_iter().next().unwrap(),
+                present_mode: PresentMode::Fifo, // Строгий V-Sync
+                ..Default::default()
+            },
+        ).expect("failed to create swapchain");
 
-            let command_pool = device.create_command_pool(
-                &vk::CommandPoolCreateInfo::default()
-                    .queue_family_index(queue_family_index)
-                    .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER),
-                None
-            ).unwrap();
+        // 7. Создаем Image Views для картинок свопчейна
+        let image_views = create_image_views(&images);
 
-            let cmd_buffers = device.allocate_command_buffers(
-                &vk::CommandBufferAllocateInfo::default()
-                    .command_pool(command_pool)
-                    .level(vk::CommandBufferLevel::PRIMARY)
-                    .command_buffer_count(MAX_FRAMES_IN_FLIGHT as u32)
-            ).unwrap();
+        // Аллокатор для командных буферов
+        let cb_allocator = Arc::new(StandardCommandBufferAllocator::new(
+            device.clone(),
+            StandardCommandBufferAllocatorCreateInfo::default(),
+        ));
 
-            let mut frames = Vec::new();
+        // 8. Инициализируем аллокатор памяти для буферов (выделяет память на GPU)
+        let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
 
-            for i in 0..MAX_FRAMES_IN_FLIGHT {
-                let semaphore_info = vk::SemaphoreCreateInfo::default();
-                let fence_info = vk::FenceCreateInfo::default()
-                    .flags(vk::FenceCreateFlags::SIGNALED);
+        window.set_visible(true);
 
-                frames.push(FrameData {
-                    cmd: cmd_buffers[i],
-                    image_available: device.create_semaphore(&semaphore_info, None).unwrap(),
-                    render_finished: device.create_semaphore(&semaphore_info, None).unwrap(),
-                    fence: device.create_fence(&fence_info, None).unwrap(),
-                });
-            }
-
-            let swapchain_loader = swapchain::Device::new(&instance, &device);
-
-            let mut ctx = Self {
-                needs_resize: false,
-
-                entry,
-                instance,
-                surface_loader,
-                surface,
-
-                device,
-                physical_device,
-                queue,
-                queue_family_index,
-
-                swapchain_loader,
-                swapchain: vk::SwapchainKHR::null(),
-
-                images: vec![],
-                image_views: vec![],
-                framebuffers: vec![],
-                render_pass: vk::RenderPass::null(),
-                extent: vk::Extent2D::default(),
-
-                frames,
-                current_frame: 0,
-
-                command_pool,
-
-                old_swapchains: vec![],
-            };
-
-            ctx.create_swapchain(window, vk::SwapchainKHR::null());
-
-            ctx
+        Self {
+            instance,
+            surface,
+            device,
+            queue,
+            swapchain,
+            images,
+            image_views,
+            cb_allocator,
+            memory_allocator,
+            image_format,
         }
     }
 
-    fn create_swapchain(&mut self, window: &Window, old: vk::SwapchainKHR) {
-        unsafe {
-            self.device.device_wait_idle().unwrap();
-
-            let size = window.inner_size();
-            if size.width == 0 || size.height == 0 {
-                return;
-            }
-
-            let caps = self.surface_loader
-                .get_physical_device_surface_capabilities(self.physical_device, self.surface)
-                .unwrap();
-
-            let format = self.surface_loader
-                .get_physical_device_surface_formats(self.physical_device, self.surface)
-                .unwrap()[0];
-
-            let extent = if caps.current_extent.width != u32::MAX {
-                caps.current_extent
-            } else {
-                vk::Extent2D {
-                    width: size.width.clamp(caps.min_image_extent.width, caps.max_image_extent.width),
-                    height: size.height.clamp(caps.min_image_extent.height, caps.max_image_extent.height),
-                }
-            };
-
-            self.extent = extent;
-
-            // triple buffering
-            let image_count = (caps.min_image_count + 2)
-                .min(caps.max_image_count.max(caps.min_image_count + 2));
-
-            // present mode
-            // let present_modes = self.surface_loader
-            //     .get_physical_device_surface_present_modes(self.physical_device, self.surface)
-            //     .unwrap();
-
-            // let present_mode = if present_modes.contains(&vk::PresentModeKHR::MAILBOX) {
-            //     vk::PresentModeKHR::MAILBOX
-            // } else {
-            //     vk::PresentModeKHR::FIFO
-            // };
-            let present_mode = vk::PresentModeKHR::MAILBOX;
-
-            println!("PRESENT MODE={}", present_mode.as_raw());
-
-            let new_swapchain = self.swapchain_loader.create_swapchain(
-                &vk::SwapchainCreateInfoKHR::default()
-                    .surface(self.surface)
-                    .min_image_count(image_count)
-                    .image_format(format.format)
-                    .image_color_space(format.color_space)
-                    .image_extent(extent)
-                    .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
-                    .image_array_layers(1)
-                    .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
-                    .pre_transform(caps.current_transform)
-                    .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-                    .present_mode(present_mode)
-                    .clipped(true)
-                    .old_swapchain(old),
-                None
-            ).unwrap();
-
-            if old != vk::SwapchainKHR::null() {
-                self.old_swapchains.push(OldSwapchain {
-                    swapchain: old,
-                    image_views: std::mem::take(&mut self.image_views),
-                    framebuffers: std::mem::take(&mut self.framebuffers),
-                    render_pass: self.render_pass,
-                });
-            }
-
-            self.swapchain = new_swapchain;
-
-            self.images = self.swapchain_loader.get_swapchain_images(self.swapchain).unwrap();
-
-            self.image_views = self.images.iter().map(|&img| {
-                self.device.create_image_view(
-                    &vk::ImageViewCreateInfo::default()
-                        .image(img)
-                        .view_type(vk::ImageViewType::TYPE_2D)
-                        .format(format.format)
-                        .subresource_range(
-                            vk::ImageSubresourceRange::default()
-                                .aspect_mask(vk::ImageAspectFlags::COLOR)
-                                .level_count(1)
-                                .layer_count(1)
-                        ),
-                    None
-                ).unwrap()
-            }).collect();
-
-            let attachment = vk::AttachmentDescription::default()
-                .format(format.format)
-                .samples(vk::SampleCountFlags::TYPE_1)
-                .load_op(vk::AttachmentLoadOp::CLEAR)
-                .store_op(vk::AttachmentStoreOp::STORE)
-                .initial_layout(vk::ImageLayout::UNDEFINED)
-                .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
-
-            let color_ref = [vk::AttachmentReference {
-                attachment: 0,
-                layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            }];
-
-            let subpass = vk::SubpassDescription::default()
-                .color_attachments(&color_ref);
-
-            self.render_pass = self.device.create_render_pass(
-                &vk::RenderPassCreateInfo::default()
-                    .attachments(&[attachment])
-                    .subpasses(&[subpass]),
-                None
-            ).unwrap();
-
-            self.framebuffers = self.image_views.iter().map(|&view| {
-                self.device.create_framebuffer(
-                    &vk::FramebufferCreateInfo::default()
-                        .render_pass(self.render_pass)
-                        .attachments(&[view])
-                        .width(extent.width)
-                        .height(extent.height)
-                        .layers(1),
-                    None
-                ).unwrap()
-            }).collect();
+    // Мгновенный для ОС ресайз
+    pub fn resize_event(&mut self, width: u32, height: u32) {
+        if width == 0 || height == 0 {
+            return;
         }
-    }
 
-    fn cleanup_old(&mut self) {
-        unsafe {
-            for old in self.old_swapchains.drain(..) {
-                for fb in old.framebuffers {
-                    self.device.destroy_framebuffer(fb, None);
-                }
-                for view in old.image_views {
-                    self.device.destroy_image_view(view, None);
-                }
-                self.device.destroy_render_pass(old.render_pass, None);
-                self.swapchain_loader.destroy_swapchain(old.swapchain, None);
-            }
-        }
-    }
-
-    pub fn resize_event(&mut self) {
-        self.needs_resize = true;
-    }
-
-    pub fn render(&mut self, window: &Window) {
-        unsafe {
-            let frame = &self.frames[self.current_frame];
-
-            // resize
-            if self.needs_resize {
-                let size = window.inner_size();
-                if size.width == 0 || size.height == 0 {
-                    return;
-                }
-
-                self.needs_resize = false;
-                self.create_swapchain(window, self.swapchain);
+        let (new_swapchain, new_images) = match self.swapchain.recreate(SwapchainCreateInfo {
+            image_extent: [width, height],
+            ..self.swapchain.create_info()
+        }) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Failed to recreate swapchain during resize: {e}");
                 return;
             }
+        };
 
-            // fence
-            if self.device.get_fence_status(frame.fence).unwrap() == false {
-                self.current_frame = (self.current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
-                return;
-            }
-            self.device.reset_fences(&[frame.fence]).unwrap();
+        self.swapchain = new_swapchain;
+        self.images = new_images;
+        self.image_views = create_image_views(&self.images);
+    }
 
-            // next image index
-            let (image_index, _) = match self.swapchain_loader.acquire_next_image(
-                self.swapchain,
-                u64::MAX,
-                frame.image_available,
-                vk::Fence::null()
-            ) {
+    pub fn render(&mut self, window: &Window, app: &mut Box<dyn AppAdapter>) {
+        // 1. Получаем индекс изображения
+        let (image_index, suboptimal, acquire_future) =
+            match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
                 Ok(r) => r,
-                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                    // was resized during acquire
-                    self.create_swapchain(window, self.swapchain);
+                Err(vulkano::Validated::Error(vulkano::VulkanError::OutOfDate)) => {
+                    // Если вдруг пропустили ресайз, пересоздаем по текущему размеру окна
+                    let size = window.inner_size();
+                    self.resize_event(size.width, size.height);
                     return;
                 }
-                Err(e) => panic!("Acquire failed: {:?}", e),
+                Err(e) => panic!("Failed to acquire next image: {e}"),
             };
 
-            // render commands
-            let cmd = frame.cmd;
-            self.device.reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty()).unwrap();
-            self.device.begin_command_buffer(cmd, &vk::CommandBufferBeginInfo::default()).unwrap();
-            let clear = [vk::ClearValue { color: vk::ClearColorValue { float32: [0.1, 0.2, 0.3, 1.0] } }];
-            self.device.cmd_begin_render_pass(
-                cmd,
-                &vk::RenderPassBeginInfo::default()
-                    .render_pass(self.render_pass)
-                    .framebuffer(self.framebuffers[image_index as usize])
-                    .render_area(vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent: self.extent })
-                    .clear_values(&clear),
-                vk::SubpassContents::INLINE
-            );
-            // draw custom scenes...
-            self.device.cmd_end_render_pass(cmd);
-            self.device.end_command_buffer(cmd).unwrap();
+        if suboptimal {
+            let size = window.inner_size();
+            self.resize_event(size.width, size.height);
+        }
 
-            // submit
-            let wait_semaphores = [frame.image_available];
-            let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-            let signal_semaphores = [frame.render_finished];
-            let cmd_bufs = [cmd];
-            let submit_info = vk::SubmitInfo::default()
-                .wait_semaphores(&wait_semaphores)
-                .wait_dst_stage_mask(&wait_stages)
-                .command_buffers(&cmd_bufs)
-                .signal_semaphores(&signal_semaphores);
-            self.device.queue_submit(self.queue, &[submit_info], frame.fence).unwrap();
+        // 2. Билдим команды
+        let mut builder = AutoCommandBufferBuilder::primary(
+            self.cb_allocator.clone(),
+            self.queue.queue_family_index(),
+            CommandBufferUsage::OneTimeSubmit,
+        ).unwrap();
 
-            // present
-            let swapchains = [self.swapchain];
-            let image_indices = [image_index];
-            let present_info = vk::PresentInfoKHR::default()
-                .wait_semaphores(&signal_semaphores)
-                .swapchains(&swapchains)
-                .image_indices(&image_indices);
+        let window_size = window.inner_size();
 
-            match self.swapchain_loader.queue_present(self.queue, &present_info) {
-                Ok(_) => { }
-                Err(vk::Result::ERROR_OUT_OF_DATE_KHR)
-                | Err(vk::Result::SUBOPTIMAL_KHR) => {
-                    // was resized during present
-                    self.create_swapchain(window, self.swapchain);
-                }
-                Err(e) => panic!("Present failed: {:?}", e),
+        builder
+            .begin_rendering(RenderingInfo {
+                color_attachments: vec![Some(RenderingAttachmentInfo {
+                    clear_value: Some([0.1, 0.2, 0.4, 1.0].into()),
+                    load_op: vulkano::render_pass::AttachmentLoadOp::Clear,
+                    store_op: vulkano::render_pass::AttachmentStoreOp::Store,
+                    ..RenderingAttachmentInfo::image_view(self.image_views[image_index as usize].clone())
+                })],
+                ..Default::default()
+            })
+            .unwrap();
+
+        // --- НАЧАЛО НОВЫХ КОМАНД ОТРИСОВКИ ---
+
+        // Задаем область вывода под текущий размер окна
+        builder
+            .set_viewport(0, [Viewport {
+                offset: [0.0, 0.0],
+                extent: [window_size.width as f32, window_size.height as f32],
+                depth_range: 0.0f32..=1.0f32,
+            }].into_iter().collect())
+            .unwrap()
+            .set_scissor(0, [vulkano::pipeline::graphics::viewport::Scissor {
+                offset: [0, 0],
+                extent: [window_size.width, window_size.height],
+            }].into_iter().collect())
+            .unwrap();
+
+        // ====================================================
+        // ДЕЛЕГИРОВАНИЕ: Передаем управление игре!
+        // Она запишет сюда свои бинды конвейеров и вызовы draw()
+        app.render(self, &mut builder);
+        // ====================================================
+
+        // --- КОНЕЦ КОМАНД ОТРИСОВКИ ---
+
+        builder.end_rendering().unwrap();
+        let command_buffer = builder.build().unwrap();
+
+        // Уведомляем систему, что мы вот-вот выведем кадр на экран (важно для плавности в winit)
+        window.pre_present_notify();
+
+        // 3. Отправляем в очередь девайса
+        let future = sync::now(self.device.clone())
+            .join(acquire_future)
+            .then_execute(self.queue.clone(), command_buffer)
+            .unwrap()
+            .then_swapchain_present(
+                self.queue.clone(),
+                SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), image_index),
+            )
+            .then_signal_fence_and_flush();
+
+        match future {
+            Ok(future) => {
+                future.wait(None).unwrap(); // Ждем завершения кадра
             }
-
-            // next frame
-            self.current_frame = (self.current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
-            self.cleanup_old();
+            Err(vulkano::Validated::Error(vulkano::VulkanError::OutOfDate)) => {
+                let size = window.inner_size();
+                self.resize_event(size.width, size.height);
+            }
+            Err(e) => {
+                println!("Failed to flush future: {e}");
+            }
         }
     }
+
+}
+
+fn create_image_views(images: &[Arc<Image>]) -> Vec<Arc<ImageView>> {
+    images
+        .iter()
+        .map(|image| ImageView::new_default(image.clone()).unwrap())
+        .collect()
 }
