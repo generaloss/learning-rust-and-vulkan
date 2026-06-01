@@ -7,6 +7,7 @@ edition = "2024"
 winit = "0.30.13"
 vulkano = { version = "0.35.2", features = ["macros"]}
 vulkano-shaders = "0.35.0"
+image = "0.25.10"
 
 # bytemuck = { version = "1.14", features = ["derive"] }
 # raw-window-handle = "0.6.2"
