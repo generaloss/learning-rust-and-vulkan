@@ -14,7 +14,7 @@ use vulkano::sync::{self, GpuFuture};
 use winit::window::Window;
 use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::pipeline::graphics::viewport::Viewport;
-use crate::engine::app_adapter::AppAdapter;
+use crate::engine::context::AppAdapter;
 
 pub struct VulkanContext {
     pub instance: Arc<Instance>,
@@ -31,9 +31,11 @@ pub struct VulkanContext {
 
 impl VulkanContext {
     pub fn new(window: Arc<Window>) -> Self {
-        // 1. Загрузка библиотеки
-        let library = VulkanLibrary::new().expect("no local Vulkan library");
-        // 2. Расширения инстанса, нужные для winit окна
+        // 1. Load library
+        let library = VulkanLibrary::new()
+            .expect("Failed to load Vulkan library");
+
+        // 2. Instance extensions for the Window
         let required_extensions = Surface::required_extensions(&window).unwrap();
 
         let instance = Instance::new(
@@ -43,11 +45,12 @@ impl VulkanContext {
                 enabled_extensions: required_extensions,
                 ..Default::default()
             },
-        ).expect("failed to create instance");
+        )
+            .expect("Failed to create instance");
 
-        // 3. Создаем Surface
+        // 3. Create Surface
         let surface = Surface::from_window(instance.clone(), window.clone())
-            .expect("failed to create surface");
+            .expect("Failed to create surface");
 
         // 4. Выбираем физическое устройство
         let device_extensions = DeviceExtensions {
@@ -122,7 +125,7 @@ impl VulkanContext {
                 image_extent: [window_size.width, window_size.height],
                 image_usage: ImageUsage::COLOR_ATTACHMENT,
                 composite_alpha: surface_capabilities.supported_composite_alpha.into_iter().next().unwrap(),
-                present_mode: PresentMode::Fifo, // Строгий V-Sync
+                present_mode: PresentMode::Fifo,
                 ..Default::default()
             },
         ).expect("failed to create swapchain");

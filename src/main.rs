@@ -2,10 +2,7 @@
 
 pub mod engine;
 
-use engine::context_builder::ContextBuilder;
-use crate::engine::context_manager::ContextManager;
 use crate::engine::vulkan_context::VulkanContext;
-use engine::app_adapter::AppAdapter;
 
 use std::sync::Arc;
 use winit::error::EventLoopError;
@@ -25,19 +22,19 @@ use vulkano::buffer::BufferContents;
 use vulkano::pipeline::graphics::vertex_input::{Vertex as VulkanoVertex, VertexDefinition};
 use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage, view::ImageView};
 use vulkano::format::Format;
-use vulkano::pipeline::Pipeline; // Для получения layout из pipeline
+use vulkano::pipeline::Pipeline;
 use vulkano::descriptor_set::{WriteDescriptorSet, allocator::StandardDescriptorSetAllocator, DescriptorSet};
 use vulkano::image::sampler::{Sampler, SamplerCreateInfo, Filter, SamplerAddressMode};
 use vulkano::sync::GpuFuture;
+use crate::engine::context::{ContextBuilder, ContextManager, AppAdapter};
 
-mod vs {
+mod v_shader {
     vulkano_shaders::shader! {
         ty: "vertex",
         path: "shaders/shader.vert",
     }
 }
-
-mod fs {
+mod f_shader {
     vulkano_shaders::shader! {
         ty: "fragment",
         path: "shaders/shader.frag",
@@ -76,7 +73,8 @@ impl BlazingFastApp {
 fn main() -> Result<(), EventLoopError> {
     let mut context = ContextBuilder::new()
         .title("Blazing Fast Engine")
-        .size(1280, 720)
+        .size(720, 720)
+        .icon("assets/icon.png")
         .create();
 
     context.set_app(BlazingFastApp::new());
@@ -94,13 +92,13 @@ impl AppAdapter for BlazingFastApp {
 
         // 1. Координаты вершин треугольника с UV-маппингом
         let vertices = [
-            MyVertex { a_pos: [-0.5, -0.5], a_uv: [0.0, 0.0] },
-            MyVertex { a_pos: [-0.5,  0.5], a_uv: [0.0, 1.0] },
-            MyVertex { a_pos: [ 0.5,  0.5], a_uv: [1.0, 1.0] },
+            MyVertex { a_pos: [-1.0, -1.0], a_uv: [0.0, 0.0] },
+            MyVertex { a_pos: [-1.0,  1.0], a_uv: [0.0, 1.0] },
+            MyVertex { a_pos: [ 1.0,  1.0], a_uv: [1.0, 1.0] },
 
-            MyVertex { a_pos: [ 0.5,  0.5], a_uv: [1.0, 1.0] },
-            MyVertex { a_pos: [ 0.5, -0.5], a_uv: [1.0, 0.0] },
-            MyVertex { a_pos: [-0.5, -0.5], a_uv: [0.0, 0.0] },
+            MyVertex { a_pos: [ 1.0,  1.0], a_uv: [1.0, 1.0] },
+            MyVertex { a_pos: [ 1.0, -1.0], a_uv: [1.0, 0.0] },
+            MyVertex { a_pos: [-1.0, -1.0], a_uv: [0.0, 0.0] },
         ];
 
         let vertex_buffer = Buffer::from_iter(
@@ -174,16 +172,16 @@ impl AppAdapter for BlazingFastApp {
         let sampler = Sampler::new(
             vulkan.device.clone(),
             SamplerCreateInfo {
-                mag_filter: Filter::Nearest, // Пиксели будут четкими (old-school)
-                min_filter: Filter::Nearest,
+                mag_filter: Filter::Linear, // Пиксели будут четкими (old-school)
+                min_filter: Filter::Linear,
                 address_mode: [SamplerAddressMode::Repeat; 3],
                 ..Default::default()
             }
         ).unwrap();
 
         // 4. Компиляция шейдеров и создание конвейера
-        let vs = vs::load(vulkan.device.clone()).unwrap();
-        let fs = fs::load(vulkan.device.clone()).unwrap();
+        let vs = v_shader::load(vulkan.device.clone()).unwrap();
+        let fs = f_shader::load(vulkan.device.clone()).unwrap();
         let vs_entry = vs.entry_point("main").unwrap();
         let fs_entry = fs.entry_point("main").unwrap();
 
