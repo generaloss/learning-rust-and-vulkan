@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 use winit::window::{Icon, Window, WindowAttributes};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::dpi::{LogicalSize};
 use winit::application::ApplicationHandler;
 use winit::error::EventLoopError;
@@ -125,16 +125,16 @@ impl Context {
     }
 
     pub fn init(&mut self, event_loop: &ActiveEventLoop) {
-        // create window
+        // Create window
         let attributes = self.window_attributes.clone();
         let window = Arc::new(event_loop.create_window(attributes).unwrap());
 
-        // create vulkan context
+        // Create vulkan context
         let vulkan = VulkanContext::new(window.clone());
         self.vulkan = Some(vulkan);
         self.window = Some(window);
 
-        // init()
+        // Init application
         if let (Some(app), Some(vulkan)) = (self.app.as_mut(), self.vulkan.as_mut()) {
             app.init(vulkan);
         }
@@ -188,17 +188,12 @@ impl ContextManager {
 
     pub fn run(&mut self) -> Result<(), EventLoopError> {
         let event_loop = EventLoop::new()?;
-        // Используем дефолтный ControlFlow (обычно Poll или Wait, winit сам решит)
         event_loop.run_app(self)
     }
 }
 
 impl ApplicationHandler for ContextManager {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // Устанавливаем Poll, чтобы игра крутилась на максимальной частоте,
-        // но саму отрисовку завяжем на запросы системы
-        event_loop.set_control_flow(ControlFlow::Poll);
-
         for mut context in self.pending.drain(..) {
             context.init(event_loop);
 
@@ -212,11 +207,9 @@ impl ApplicationHandler for ContextManager {
         if let Some(context) = self.contexts.get_mut(&window_id) {
             match event {
                 WindowEvent::Resized(size) => {
-                    // ГЛОБАЛЬНЫЙ СДВИГ: пересоздаем все ресурсы Vulkan МГНОВЕННО здесь
                     context.resize(size.width, size.height);
                 }
                 WindowEvent::RedrawRequested => {
-                    // Рендерим ТОЛЬКО тогда, когда ОС или мы сами явно попросили перерисовать кадр
                     context.render();
                 }
                 WindowEvent::CloseRequested => {
@@ -232,10 +225,9 @@ impl ApplicationHandler for ContextManager {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        // Вместо прямого вызова render(), мы отправляем окну запрос на перерисовку.
-        // ОС обработает его на следующем шаге своего композитора.
         for context in self.contexts.values_mut() {
             if let Some(window) = context.window.as_mut() {
+                // Отправляем окну запрос на перерисовку. ОС обработает его на следующем шаге своего композитора.
                 window.request_redraw();
             }
         }

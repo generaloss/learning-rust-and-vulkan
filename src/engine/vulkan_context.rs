@@ -14,7 +14,7 @@ use vulkano::sync::{self, GpuFuture};
 use winit::window::Window;
 use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::pipeline::graphics::viewport::Viewport;
-use crate::engine::context::AppAdapter;
+use crate::engine::application_context::AppAdapter;
 
 pub struct VulkanContext {
     pub instance: Arc<Instance>,

@@ -5,7 +5,11 @@ layout(location = 1) in vec2 a_uv;
 
 layout(location = 0) out vec2 v_uv;
 
+layout(push_constant) uniform PushConstants {
+    mat4 u_combined;
+} pcs;
+
 void main() {
-    gl_Position = vec4(a_pos, 0.0, 1.0);
+    gl_Position = pcs.u_combined * vec4(a_pos, 0.0, 1.0);
     v_uv = a_uv;
 }
