@@ -33,46 +33,24 @@ use vulkano::sync::GpuFuture;
 mod vs {
     vulkano_shaders::shader! {
         ty: "vertex",
-        src: r#"
-            #version 450
-            layout(location = 0) in vec2 position;
-            layout(location = 1) in vec2 tex_coords;
-
-            layout(location = 0) out vec2 v_tex_coords;
-
-            void main() {
-                gl_Position = vec4(position, 0.0, 1.0);
-                v_tex_coords = tex_coords;
-            }
-        "#,
+        path: "shaders/shader.vert",
     }
 }
 
 mod fs {
     vulkano_shaders::shader! {
         ty: "fragment",
-        src: r#"
-            #version 450
-            layout(location = 0) in vec2 v_tex_coords;
-            layout(location = 0) out vec4 f_color;
-
-            // Набор 0, биндинг 0 — сюда прилетит наша текстура с семплером
-            layout(set = 0, binding = 0) uniform sampler2D tex;
-
-            void main() {
-                f_color = texture(tex, v_tex_coords);
-            }
-        "#,
+        path: "shaders/shader.frag",
     }
 }
 
 #[derive(BufferContents, VulkanoVertex, Clone, Copy, Debug, Default)]
 #[repr(C)]
 struct MyVertex {
-    #[format(R32G32_SFLOAT)] // vec2 XY
-    position: [f32; 2],
-    #[format(R32G32_SFLOAT)] // vec2 UV
-    tex_coords: [f32; 2],
+    #[format(R32G32_SFLOAT)]
+    a_pos: [f32; 2],
+    #[format(R32G32_SFLOAT)]
+    a_uv: [f32; 2],
 }
 
 
@@ -116,13 +94,13 @@ impl AppAdapter for BlazingFastApp {
 
         // 1. Координаты вершин треугольника с UV-маппингом
         let vertices = [
-            MyVertex { position: [-0.5, -0.5], tex_coords: [0.0, 0.0] },
-            MyVertex { position: [-0.5,  0.5], tex_coords: [0.0, 1.0] },
-            MyVertex { position: [ 0.5,  0.5], tex_coords: [1.0, 1.0] },
+            MyVertex { a_pos: [-0.5, -0.5], a_uv: [0.0, 0.0] },
+            MyVertex { a_pos: [-0.5,  0.5], a_uv: [0.0, 1.0] },
+            MyVertex { a_pos: [ 0.5,  0.5], a_uv: [1.0, 1.0] },
 
-            MyVertex { position: [ 0.5,  0.5], tex_coords: [1.0, 1.0] },
-            MyVertex { position: [ 0.5, -0.5], tex_coords: [1.0, 0.0] },
-            MyVertex { position: [-0.5, -0.5], tex_coords: [0.0, 0.0] },
+            MyVertex { a_pos: [ 0.5,  0.5], a_uv: [1.0, 1.0] },
+            MyVertex { a_pos: [ 0.5, -0.5], a_uv: [1.0, 0.0] },
+            MyVertex { a_pos: [-0.5, -0.5], a_uv: [0.0, 0.0] },
         ];
 
         let vertex_buffer = Buffer::from_iter(
