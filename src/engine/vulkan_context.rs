@@ -3,18 +3,23 @@
 use std::sync::Arc;
 use vulkano::VulkanLibrary;
 use vulkano::command_buffer::allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, RenderingAttachmentInfo, RenderingInfo};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo};
 use vulkano::device::physical::{PhysicalDeviceType};
 use vulkano::device::{Device, DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo, QueueFlags, DeviceFeatures};
+use vulkano::format::Format;
 use vulkano::image::view::ImageView;
 use vulkano::image::{Image, ImageUsage};
 use vulkano::instance::{Instance, InstanceCreateFlags, InstanceCreateInfo};
-use vulkano::swapchain::{Surface, Swapchain, SwapchainCreateInfo, SwapchainPresentInfo, PresentMode};
+use vulkano::swapchain::{Surface, Swapchain, SwapchainCreateInfo, SwapchainPresentInfo, PresentMode, SwapchainAcquireFuture};
 use vulkano::sync::{self, GpuFuture};
 use winit::window::Window;
 use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::pipeline::graphics::viewport::Viewport;
-use crate::engine::application_context::AppAdapter;
+
+pub struct FrameInfo {
+    pub image_index: u32,
+    pub acquire_future: SwapchainAcquireFuture,
+}
 
 pub struct VulkanContext {
     pub instance: Arc<Instance>,
@@ -26,7 +31,7 @@ pub struct VulkanContext {
     pub image_views: Vec<Arc<ImageView>>,
     pub cb_allocator: Arc<StandardCommandBufferAllocator>,
     pub memory_allocator: Arc<StandardMemoryAllocator>,
-    pub image_format: vulkano::format::Format,
+    pub image_format: Format,
 }
 
 impl VulkanContext {
@@ -182,23 +187,20 @@ impl VulkanContext {
         self.image_views = create_image_views(&self.images);
     }
 
-    pub fn render(&mut self, window: &Window, app: &mut Box<dyn AppAdapter>) {
+    pub fn begin_frame(&mut self, window_size: winit::dpi::PhysicalSize<u32>) -> Option<(AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, FrameInfo)> {
         // 1. Получаем индекс изображения
         let (image_index, suboptimal, acquire_future) =
             match vulkano::swapchain::acquire_next_image(self.swapchain.clone(), None) {
                 Ok(r) => r,
                 Err(vulkano::Validated::Error(vulkano::VulkanError::OutOfDate)) => {
-                    // Если вдруг пропустили ресайз, пересоздаем по текущему размеру окна
-                    let size = window.inner_size();
-                    self.resize_event(size.width, size.height);
-                    return;
+                    self.resize_event(window_size.width, window_size.height);
+                    return None;
                 }
                 Err(e) => panic!("Failed to acquire next image: {e}"),
             };
 
         if suboptimal {
-            let size = window.inner_size();
-            self.resize_event(size.width, size.height);
+            self.resize_event(window_size.width, window_size.height);
         }
 
         // 2. Билдим команды
@@ -207,8 +209,6 @@ impl VulkanContext {
             self.queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit,
         ).unwrap();
-
-        let window_size = window.inner_size();
 
         builder
             .begin_rendering(RenderingInfo {
@@ -221,8 +221,6 @@ impl VulkanContext {
                 ..Default::default()
             })
             .unwrap();
-
-        // --- НАЧАЛО НОВЫХ КОМАНД ОТРИСОВКИ ---
 
         // Задаем область вывода под текущий размер окна
         builder
@@ -238,28 +236,28 @@ impl VulkanContext {
             }].into_iter().collect())
             .unwrap();
 
-        // ====================================================
-        // ДЕЛЕГИРОВАНИЕ: Передаем управление игре!
-        // Она запишет сюда свои бинды конвейеров и вызовы draw()
-        app.render(self, &mut builder);
-        // ====================================================
+        // Упаковываем данные для этапа отправки на GPU
+        let frame_info = FrameInfo {
+            image_index,
+            acquire_future,
+        };
 
-        // --- КОНЕЦ КОМАНД ОТРИСОВКИ ---
+        Some((builder, frame_info))
+    }
 
+    pub fn end_frame(&mut self, mut builder: AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+                     frame_info: FrameInfo, window_size: winit::dpi::PhysicalSize<u32>) {
         builder.end_rendering().unwrap();
         let command_buffer = builder.build().unwrap();
 
-        // Уведомляем систему, что мы вот-вот выведем кадр на экран (важно для плавности в winit)
-        window.pre_present_notify();
-
         // 3. Отправляем в очередь девайса
         let future = sync::now(self.device.clone())
-            .join(acquire_future)
+            .join(frame_info.acquire_future)
             .then_execute(self.queue.clone(), command_buffer)
             .unwrap()
             .then_swapchain_present(
                 self.queue.clone(),
-                SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), image_index),
+                SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), frame_info.image_index),
             )
             .then_signal_fence_and_flush();
 
@@ -268,8 +266,7 @@ impl VulkanContext {
                 future.wait(None).unwrap(); // Ждем завершения кадра
             }
             Err(vulkano::Validated::Error(vulkano::VulkanError::OutOfDate)) => {
-                let size = window.inner_size();
-                self.resize_event(size.width, size.height);
+                self.resize_event(window_size.width, window_size.height);
             }
             Err(e) => {
                 println!("Failed to flush future: {e}");

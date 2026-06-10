@@ -11,14 +11,15 @@ use winit::error::EventLoopError;
 use winit::event::WindowEvent;
 use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::window::WindowId;
+use crate::engine::input::Input;
 use crate::engine::vulkan_context::VulkanContext;
 
 
 pub trait AppAdapter {
 
-    fn init(&mut self, vulkan: &mut VulkanContext);
-    fn render(&mut self, vulkan: &mut VulkanContext, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>);
-    fn resize(&mut self, width: u32, height: u32);
+    fn init(&mut self, context: &mut ContextFields);
+    fn render(&mut self, context: &mut ContextFields, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>);
+    fn resize(&mut self, context: &mut ContextFields, width: u32, height: u32);
     fn shutdown(&mut self);
 
 }
@@ -98,11 +99,18 @@ fn icon_from_path(icon_path: String) -> Icon {
 }
 
 
+pub struct ContextFields {
+    pub window: Arc<Window>,
+    pub vulkan: VulkanContext,
+    pub input: Input,
+    pub should_close: bool,
+}
+
+
 pub struct Context {
     window_attributes: WindowAttributes,
-    pub window: Option<Arc<Window>>,
-    pub app: Option<Box<dyn AppAdapter>>,
-    pub vulkan: Option<VulkanContext>
+    app: Option<Box<dyn AppAdapter>>,
+    fields: Option<ContextFields>,
 }
 
 impl Context {
@@ -110,9 +118,8 @@ impl Context {
     pub fn new(window_attributes: WindowAttributes) -> Context {
         Self {
             window_attributes,
-            window: None,
             app: None,
-            vulkan: None
+            fields: None,
         }
     }
 
@@ -125,24 +132,39 @@ impl Context {
     }
 
     pub fn init(&mut self, event_loop: &ActiveEventLoop) {
-        // Create window
         let attributes = self.window_attributes.clone();
+
         let window = Arc::new(event_loop.create_window(attributes).unwrap());
-
-        // Create vulkan context
         let vulkan = VulkanContext::new(window.clone());
-        self.vulkan = Some(vulkan);
-        self.window = Some(window);
+        let input = Input::new();
 
-        // Init application
-        if let (Some(app), Some(vulkan)) = (self.app.as_mut(), self.vulkan.as_mut()) {
-            app.init(vulkan);
+        self.fields = Some(
+            ContextFields {
+                window,
+                vulkan,
+                input,
+                should_close: false,
+            }
+        );
+
+        if let (Some(app), Some(fields)) = (self.app.as_mut(), self.fields.as_mut()) {
+            app.init(fields);
         }
     }
 
     pub fn render(&mut self) {
-        if let (Some(window), Some(vulkan), Some(app)) = (self.window.as_mut(), self.vulkan.as_mut(), self.app.as_mut()) {
-            vulkan.render(window, app);
+        if let Some(fields) = self.fields.as_mut() {
+            if let Some(app) = self.app.as_mut() {
+
+                let window_size = fields.window.inner_size();
+
+                if let Some((mut builder, frame_info)) = fields.vulkan.begin_frame(window_size) {
+                    app.render(fields, &mut builder);
+                    fields.window.pre_present_notify();
+                    fields.vulkan.end_frame(builder, frame_info, window_size);
+                }
+            }
+            fields.input.clear_frame_states();
         }
     }
 
@@ -151,12 +173,12 @@ impl Context {
             return;
         }
 
-        if let Some(vulkan) = self.vulkan.as_mut() {
-            vulkan.resize_event(width, height);
-        }
+        if let Some(fields) = self.fields.as_mut() {
+            fields.vulkan.resize_event(width, height);
 
-        if let Some(app) = self.app.as_mut() {
-            app.resize(width, height);
+            if let Some(app) = self.app.as_mut() {
+                app.resize(fields, width, height);
+            }
         }
     }
 
@@ -192,13 +214,14 @@ impl ContextManager {
     }
 }
 
+
 impl ApplicationHandler for ContextManager {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         for mut context in self.pending.drain(..) {
             context.init(event_loop);
 
-            if let Some(window) = context.window.as_mut() {
-                self.contexts.insert(window.id(), context);
+            if let Some(fields) = context.fields.as_mut() {
+                self.contexts.insert(fields.window.id(), context);
             }
         }
     }
@@ -211,6 +234,17 @@ impl ApplicationHandler for ContextManager {
                 }
                 WindowEvent::RedrawRequested => {
                     context.render();
+
+                    if let Some(fields) = context.fields.as_mut() {
+                        if fields.should_close {
+                            context.shutdown();
+                            self.contexts.remove(&window_id);
+                            if self.contexts.is_empty() {
+                                _event_loop.exit();
+                            }
+                            return;
+                        }
+                    }
                 }
                 WindowEvent::CloseRequested => {
                     context.shutdown();
@@ -218,18 +252,28 @@ impl ApplicationHandler for ContextManager {
                     if self.contexts.is_empty() {
                         _event_loop.exit();
                     }
+                    return;
+                }
+                WindowEvent::KeyboardInput { device_id: _, event: key_event, is_synthetic: _ } => {
+                    if let Some(fields) = context.fields.as_mut() {
+                        if let winit::keyboard::PhysicalKey::Code(key_code) = key_event.physical_key {
+                            fields.input.handle_key_event(key_code, key_event.state);
+                        }
+                    }
                 }
                 _ => {}
             }
         }
+
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
         for context in self.contexts.values_mut() {
-            if let Some(window) = context.window.as_mut() {
+            if let Some(fields) = context.fields.as_mut() {
                 // Отправляем окну запрос на перерисовку. ОС обработает его на следующем шаге своего композитора.
-                window.request_redraw();
+                fields.window.request_redraw();
             }
         }
     }
+
 }
