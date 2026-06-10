@@ -78,8 +78,8 @@ impl Texture {
         let sampler = Sampler::new(
             vulkan_context.device.clone(),
             SamplerCreateInfo {
-                mag_filter: Filter::Linear,
-                min_filter: Filter::Linear,
+                mag_filter: Filter::Nearest,
+                min_filter: Filter::Nearest,
                 address_mode: [SamplerAddressMode::Repeat; 3],
                 ..Default::default()
             }

@@ -1,3 +1,5 @@
+// 'main.rs'
+
 pub mod engine;
 
 use winit::error::EventLoopError;
@@ -10,6 +12,15 @@ use crate::engine::vulkan_context::VulkanContext;
 use crate::engine::camera::CameraOrthographic;
 use crate::engine::sprite_batch::SpriteBatch;
 use crate::engine::texture::Texture;
+
+const MAP_WIDTH: usize = 50;
+const MAP_HEIGHT: usize = 50;
+const TILE_SIZE: f32 = 32.0;
+
+const TILE_GRASS: u32 = 0;
+const TILE_DIRT: u32 = 1;
+const TILE_STONE: u32 = 2;
+const TILE_PLANKS: u32 = 3;
 
 fn main() -> Result<(), EventLoopError> {
     let mut context = ContextBuilder::new()
@@ -30,6 +41,7 @@ struct BlazingFastApp {
     batch: Option<SpriteBatch>,
     textures: Vec<Texture>,
     camera: CameraOrthographic,
+    tile_map: Vec<u32>,
 }
 
 impl BlazingFastApp {
@@ -38,49 +50,74 @@ impl BlazingFastApp {
             batch: None,
             textures: Vec::new(),
             camera: CameraOrthographic::new(),
+            tile_map: vec![TILE_GRASS; MAP_WIDTH * MAP_HEIGHT],
         }
     }
 }
 
 impl AppAdapter for BlazingFastApp {
     fn init(&mut self, vulkan_context: &mut VulkanContext) {
-        // 1. Просто последовательно загружаем наши изображения с диска
-        let texture_1 = Texture::from_path(vulkan_context, "assets/image_1.jpg");
-        let texture_2 = Texture::from_path(vulkan_context, "assets/image_2.jpg");
-        let texture_3 = Texture::from_path(vulkan_context, "assets/image_3.jpg");
-        let texture_4 = Texture::from_path(vulkan_context, "assets/image_4.jpg");
-        let texture_5 = Texture::from_path(vulkan_context, "assets/image_5.jpg");
+        let grass_texture  = Texture::from_path(vulkan_context, "assets/tiles/grass.png");
+        let dirt_texture   = Texture::from_path(vulkan_context, "assets/tiles/dirt.png");
+        let stone_texture  = Texture::from_path(vulkan_context, "assets/tiles/stone.png");
+        let planks_texture = Texture::from_path(vulkan_context, "assets/tiles/planks.png");
 
-        // Сохраняем владение текстурами в структуре приложения
-        self.textures = vec![texture_1, texture_2, texture_3, texture_4, texture_5];
+        self.textures = vec![grass_texture, dirt_texture, stone_texture, planks_texture];
 
-        // 2. Создаем наш изолированный SpriteBatch
         let mut batch = SpriteBatch::new(vulkan_context, 10000);
-
-        // 3. Собираем массив ссылок на текстуры и скармливаем его бетчу
         let texture_refs: Vec<&Texture> = self.textures.iter().collect();
         batch.set_textures(&texture_refs);
 
         self.batch = Some(batch);
+
+        for y in 0..MAP_HEIGHT {
+            for x in 0..MAP_WIDTH {
+                let index = y * MAP_WIDTH + x;
+
+                if x == 0 || y == 0 || x == MAP_WIDTH - 1 || y == MAP_HEIGHT - 1 {
+                    self.tile_map[index] = TILE_STONE;
+                }
+                else if x >= 22 && x <= 28 && y >= 22 && y <= 28 {
+                    if x == 22 || x == 28 || y == 22 || y == 28 {
+                        if x == 25 && y == 22 {
+                            self.tile_map[index] = TILE_DIRT;
+                        } else {
+                            self.tile_map[index] = TILE_STONE;
+                        }
+                    } else {
+                        self.tile_map[index] = TILE_PLANKS;
+                    }
+                }
+                else if x == 25 || y == 25 {
+                    self.tile_map[index] = TILE_DIRT;
+                }
+                else {
+                    if random_range(0..5) == 0 {
+                        self.tile_map[index] = TILE_DIRT;
+                    } else {
+                        self.tile_map[index] = TILE_GRASS;
+                    }
+                }
+            }
+        }
     }
 
-    fn render(&mut self, _vulkan: &mut VulkanContext, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) {
+    fn render(&mut self, _vulkan_context: &mut VulkanContext, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) {
         if let Some(batch) = &mut self.batch {
             batch.begin();
 
-            // Массированная отрисовка сетки случайных квадов
-            for i in 0..50 {
-                for j in 0..50 {
-                    batch.draw_quad(i as f32 * 20.0, j as f32 * 20.0, 20.0, 20.0, random_range(0..5));
+            for y in 0..MAP_HEIGHT {
+                for x in 0..MAP_WIDTH {
+                    let index = y * MAP_WIDTH + x;
+                    let texture_id = self.tile_map[index];
+
+                    let screen_x = x as f32 * TILE_SIZE;
+                    let screen_y = y as f32 * TILE_SIZE;
+
+                    batch.draw_quad(screen_x, screen_y, TILE_SIZE, TILE_SIZE, texture_id);
                 }
             }
 
-            // Отрисовка крупных перекрывающих спрайтов поверх сетки
-            batch.draw_quad(250.0, 50.0, 150.0, 150.0, 1);  // image_2
-            batch.draw_quad(100.0, 300.0, 400.0, 200.0, 2); // image_3
-            batch.draw_quad(50.0, 500.0, 100.0, 100.0, 4);  // image_5
-
-            // Завершаем рендеринг кадра, передавая только матрицу проекции камеры
             batch.end(builder, self.camera.combined.to_cols_array_2d());
         }
     }
