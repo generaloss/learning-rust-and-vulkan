@@ -84,9 +84,11 @@ impl VulkanContext {
             .expect("no suitable physical device found");
 
         // 5. Создаем логическое устройство
-        // Включаем фичу dynamic_rendering (требует Vulkan 1.3+ на уровне драйвера)
-        let mut device_features = DeviceFeatures::empty();
-        device_features.dynamic_rendering = true;
+        let mut device_features = DeviceFeatures {
+            dynamic_rendering: true,
+            shader_sampled_image_array_non_uniform_indexing: true,
+            ..DeviceFeatures::empty()
+        };
 
         let (device, mut queues) = Device::new(
             physical_device,
