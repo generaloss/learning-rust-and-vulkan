@@ -89,7 +89,7 @@ impl VulkanContext {
             .expect("no suitable physical device found");
 
         // 5. Создаем логическое устройство
-        let mut device_features = DeviceFeatures {
+        let device_features = DeviceFeatures {
             dynamic_rendering: true,
             shader_sampled_image_array_non_uniform_indexing: true,
             ..DeviceFeatures::empty()

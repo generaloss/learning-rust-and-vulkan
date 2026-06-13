@@ -11,5 +11,7 @@ image = "0.25.10"
 glam = "0.33.1"
 rand = "0.10.1"
 
+noise = "0.9.0"
+
 [profile.dev]
 opt-level = 1

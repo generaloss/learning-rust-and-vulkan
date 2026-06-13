@@ -6,3 +6,4 @@ pub mod camera;
 pub mod shader;
 pub mod sprite_batch;
 pub mod input;
+pub mod texture_region;

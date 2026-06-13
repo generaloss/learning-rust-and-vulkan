@@ -1,6 +1,7 @@
 // 'camera.rs'
 
-use glam::{Mat4, Quat, Vec3};
+use std::ops::Sub;
+use glam::{Mat4, Quat, Vec2, Vec3};
 
 pub struct CameraPerspective {
     pub width: f32,
@@ -8,7 +9,7 @@ pub struct CameraPerspective {
     pub near: f32,
     pub far: f32,
     pub fov: f32,
-
+    
     pub position: Vec3,
 
     pub projection: Mat4,
@@ -27,7 +28,7 @@ impl CameraPerspective {
             near: 0.1,
             far: 100.0,
             fov: 90.0,
-
+            
             position: Vec3::ZERO,
 
             projection: Mat4::IDENTITY,
@@ -77,6 +78,8 @@ pub struct CameraOrthographic {
     pub near: f32,
     pub far: f32,
 
+    origin: Vec2,
+
     pub position: Vec3,
     pub scale: Vec3,
 
@@ -93,6 +96,8 @@ impl CameraOrthographic {
             near: -1.0,
             far: 1.0,
 
+            origin: Vec2::ZERO,
+
             position: Vec3::ZERO,
             scale: Vec3::ONE,
 
@@ -102,6 +107,16 @@ impl CameraOrthographic {
         }
     }
 
+    pub fn set_origin(&mut self, origin: Vec2) {
+        self.origin = origin;
+        self.update_projection();
+    }
+
+    pub fn origin(&self) -> Vec2 {
+        self.origin
+    }
+    
+    
     pub fn update(&mut self) {
         let world = Mat4::from_scale_rotation_translation(self.scale, Quat::IDENTITY, self.position);
         self.view = world.inverse();
@@ -113,13 +128,20 @@ impl CameraOrthographic {
         self.height = height;
         self.update_projection();
     }
-
+    
     fn update_projection(&mut self) {
+        let inv_origin = Vec2::ONE.sub(self.origin);
+        
+        let left = -self.width * self.origin.x;
+        let right = self.width * inv_origin.x;
+        let bottom = self.height * inv_origin.y;
+        let top = -self.height * self.origin.y;
+        
         self.projection = Mat4::orthographic_lh(
-            0.0,
-            self.width,
-            self.height,
-            0.0,
+            left,
+            right,
+            bottom,
+            top,
             self.near,
             self.far,
         );

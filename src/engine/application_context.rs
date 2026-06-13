@@ -14,14 +14,12 @@ use winit::window::WindowId;
 use crate::engine::input::Input;
 use crate::engine::vulkan_context::VulkanContext;
 
-
 pub trait AppAdapter {
-
     fn init(&mut self, context: &mut ContextFields);
+    fn update(&mut self, fields: &mut ContextFields);
     fn render(&mut self, context: &mut ContextFields, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>);
     fn resize(&mut self, context: &mut ContextFields, width: u32, height: u32);
     fn shutdown(&mut self);
-
 }
 
 
@@ -152,6 +150,17 @@ impl Context {
         }
     }
 
+    pub fn update(&mut self) {
+        if let Some(fields) = self.fields.as_mut() {
+
+            fields.input.clear_frame_states();
+
+            if let Some(app) = self.app.as_mut() {
+                app.update(fields);
+            }
+        }
+    }
+
     pub fn render(&mut self) {
         if let Some(fields) = self.fields.as_mut() {
             if let Some(app) = self.app.as_mut() {
@@ -164,7 +173,6 @@ impl Context {
                     fields.vulkan.end_frame(builder, frame_info, window_size);
                 }
             }
-            fields.input.clear_frame_states();
         }
     }
 
@@ -233,6 +241,7 @@ impl ApplicationHandler for ContextManager {
                     context.resize(size.width, size.height);
                 }
                 WindowEvent::RedrawRequested => {
+                    context.update();
                     context.render();
 
                     if let Some(fields) = context.fields.as_mut() {
