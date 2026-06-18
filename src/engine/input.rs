@@ -1,6 +1,7 @@
 // 'input.rs'
 
 use std::collections::HashSet;
+use glam::Vec2;
 pub use winit::keyboard::KeyCode;
 use winit::event::ElementState;
 
@@ -8,6 +9,8 @@ pub struct Input {
     down_keys: HashSet<KeyCode>,
     pressed_keys: HashSet<KeyCode>,
     up_keys: HashSet<KeyCode>,
+
+    pub scroll_delta: Vec2,
 }
 
 impl Input {
@@ -16,6 +19,8 @@ impl Input {
             down_keys: HashSet::new(),
             pressed_keys: HashSet::new(),
             up_keys: HashSet::new(),
+
+            scroll_delta: Vec2::ZERO,
         }
     }
 
@@ -37,6 +42,9 @@ impl Input {
     pub fn clear_frame_states(&mut self) {
         self.down_keys.clear();
         self.up_keys.clear();
+
+        self.scroll_delta.x = 0.0;
+        self.scroll_delta.y = 0.0;
     }
 
     pub fn is_key_down(&self, key_code: KeyCode) -> bool {

@@ -12,6 +12,9 @@ glam = "0.33.1"
 rand = "0.10.1"
 
 noise = "0.9.0"
+bincode = "1.3.3"
+typetag = "0.2.22"
+serde = { version = "1.0.228", features = ["derive"] }
 
 [profile.dev]
 opt-level = 1

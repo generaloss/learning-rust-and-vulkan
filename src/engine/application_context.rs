@@ -3,12 +3,12 @@
 use std::sync::Arc;
 use std::collections::HashMap;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
-use winit::window::{Icon, Window, WindowAttributes};
+use winit::window::{Fullscreen, Icon, Window, WindowAttributes};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::dpi::{LogicalSize};
 use winit::application::ApplicationHandler;
 use winit::error::EventLoopError;
-use winit::event::WindowEvent;
+use winit::event::{MouseScrollDelta, WindowEvent};
 use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::window::WindowId;
 use crate::engine::input::Input;
@@ -104,6 +104,17 @@ pub struct ContextFields {
     pub should_close: bool,
 }
 
+impl ContextFields {
+    pub fn toggle_fullscreen(&self) {
+        let next_state = if self.window.fullscreen().is_some() {
+            None
+        } else {
+            Some(Fullscreen::Borderless(self.window.current_monitor()))
+        };
+        self.window.set_fullscreen(next_state);
+    }
+}
+
 
 pub struct Context {
     window_attributes: WindowAttributes,
@@ -152,9 +163,6 @@ impl Context {
 
     pub fn update(&mut self) {
         if let Some(fields) = self.fields.as_mut() {
-
-            fields.input.clear_frame_states();
-
             if let Some(app) = self.app.as_mut() {
                 app.update(fields);
             }
@@ -245,6 +253,8 @@ impl ApplicationHandler for ContextManager {
                     context.render();
 
                     if let Some(fields) = context.fields.as_mut() {
+                        fields.input.clear_frame_states();
+
                         if fields.should_close {
                             context.shutdown();
                             self.contexts.remove(&window_id);
@@ -268,6 +278,23 @@ impl ApplicationHandler for ContextManager {
                         if let winit::keyboard::PhysicalKey::Code(key_code) = key_event.physical_key {
                             fields.input.handle_key_event(key_code, key_event.state);
                         }
+                    }
+                }
+                WindowEvent::MouseWheel { device_id: _, delta, phase: _} => {
+                    if let Some(fields) = context.fields.as_mut() {
+                        let (x, y) = match delta {
+                            MouseScrollDelta::LineDelta(line_x, line_y) => (line_x, line_y),
+                            MouseScrollDelta::PixelDelta(physical_pos) => {
+                                let pixels_per_line = 38.0;
+                                (
+                                    (physical_pos.x / pixels_per_line) as f32,
+                                    (physical_pos.y / pixels_per_line) as f32,
+                                )
+                            }
+                        };
+
+                        fields.input.scroll_delta.x += x;
+                        fields.input.scroll_delta.y += y;
                     }
                 }
                 _ => {}

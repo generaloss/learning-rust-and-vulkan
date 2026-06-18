@@ -194,14 +194,19 @@ impl VulkanContext {
                 Ok(r) => r,
                 Err(vulkano::Validated::Error(vulkano::VulkanError::OutOfDate)) => {
                     self.resize_event(window_size.width, window_size.height);
-                    return None;
+                    return None; // Пропускаем кадр, пересоздав ресурсы
                 }
                 Err(e) => panic!("Failed to acquire next image: {e}"),
             };
 
+        // Если свопчейн устарел, тоже безопасно пересоздаем его и пропускаем кадр
         if suboptimal {
             self.resize_event(window_size.width, window_size.height);
+            return None;
         }
+
+        // Беру реальный размер текстур текущего свопчейна, а не окна winit!
+        let swapchain_extent = self.swapchain.image_extent();
 
         // 2. Билдим команды
         let mut builder = AutoCommandBufferBuilder::primary(
@@ -222,21 +227,20 @@ impl VulkanContext {
             })
             .unwrap();
 
-        // Задаем область вывода под текущий размер окна
+        // Задаем область вывода под РЕАЛЬНЫЙ размер свопчейна
         builder
             .set_viewport(0, [Viewport {
                 offset: [0.0, 0.0],
-                extent: [window_size.width as f32, window_size.height as f32],
+                extent: [swapchain_extent[0] as f32, swapchain_extent[1] as f32],
                 depth_range: 0.0f32..=1.0f32,
             }].into_iter().collect())
             .unwrap()
             .set_scissor(0, [vulkano::pipeline::graphics::viewport::Scissor {
                 offset: [0, 0],
-                extent: [window_size.width, window_size.height],
+                extent: swapchain_extent,
             }].into_iter().collect())
             .unwrap();
 
-        // Упаковываем данные для этапа отправки на GPU
         let frame_info = FrameInfo {
             image_index,
             acquire_future,
@@ -250,7 +254,6 @@ impl VulkanContext {
         builder.end_rendering().unwrap();
         let command_buffer = builder.build().unwrap();
 
-        // 3. Отправляем в очередь девайса
         let future = sync::now(self.device.clone())
             .join(frame_info.acquire_future)
             .then_execute(self.queue.clone(), command_buffer)
@@ -263,9 +266,10 @@ impl VulkanContext {
 
         match future {
             Ok(future) => {
-                future.wait(None).unwrap(); // Ждем завершения кадра
+                future.wait(None).unwrap();
             }
-            Err(vulkano::Validated::Error(vulkano::VulkanError::OutOfDate)) => {
+            // Ловим И OutOfDate, И SurfaceLost
+            Err(vulkano::Validated::Error(vulkano::VulkanError::OutOfDate | vulkano::VulkanError::SurfaceLost)) => {
                 self.resize_event(window_size.width, window_size.height);
             }
             Err(e) => {

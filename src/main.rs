@@ -2,29 +2,32 @@
 
 pub mod engine;
 pub mod tilemap;
+pub mod entity;
 
-use std::ops::{AddAssign, Mul, Sub};
+use std::cmp::max;
+use std::ops::{Add, AddAssign, Deref, Mul, Sub};
 use glam::{Vec2, Vec3, Vec3Swizzles};
-use noise::{Fbm, NoiseFn, Perlin};
+use noise::{Fbm, NoiseFn, Simplex};
 use winit::error::EventLoopError;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use rand::random_range;
-
 use crate::engine::application_context::{ContextBuilder, ContextManager, AppAdapter, ContextFields};
 use crate::engine::camera::CameraOrthographic;
 use crate::engine::sprite_batch::SpriteBatch;
 use crate::engine::texture::Texture;
 use crate::engine::input::{KeyCode};
 use crate::engine::texture_region::Region;
+use crate::entity::{ComponentPosition, Entity};
 use crate::tilemap::Tilemap;
 
-const TILE_SIZE: f32 = 16.0;
+const TILE_SIZE: f32 = 32.0;
 
-const TILE_GRASS: u32 = 0;
-const TILE_DIRT: u32 = 1;
-const TILE_STONE: u32 = 2;
-const TILE_PLANKS: u32 = 3;
+const TILE_AIR: u32 = 0;
+const TILE_GRASS: u32 = 1;
+const TILE_DIRT: u32 = 2;
+const TILE_STONE: u32 = 3;
+const TILE_PLANKS: u32 = 4;
 
 fn main() -> Result<(), EventLoopError> {
     let mut context = ContextBuilder::new()
@@ -57,9 +60,9 @@ impl BlazingFastApp {
             batch: None,
             textures: Vec::new(),
             camera: CameraOrthographic::new(),
-            tile_map: Tilemap::new(300, 300),
+            tile_map: Tilemap::new(500, 100),
 
-            player_pos: Vec2::new(25.0, 20.0).mul(TILE_SIZE),
+            player_pos: Vec2::new(250.0, 80.0).mul(TILE_SIZE),
             player_speed: 4.0,
         }
     }
@@ -68,6 +71,7 @@ impl BlazingFastApp {
 impl AppAdapter for BlazingFastApp {
     fn init(&mut self, fields: &mut ContextFields) {
         self.camera.set_origin(Vec2::splat(0.5));
+        self.camera.position.add_assign(Vec3::new(self.player_pos.x + 0.5 * TILE_SIZE, self.player_pos.y + 0.5 * TILE_SIZE, 0.0));
 
         let grass_texture  = Texture::from_path(&fields.vulkan, "assets/tiles/grass.png");
         let dirt_texture   = Texture::from_path(&fields.vulkan, "assets/tiles/dirt.png");
@@ -76,52 +80,60 @@ impl AppAdapter for BlazingFastApp {
 
         self.textures = vec![grass_texture, dirt_texture, stone_texture, planks_texture];
 
-        let mut batch = SpriteBatch::new(&fields.vulkan, 1000000);
+        let mut batch = SpriteBatch::new(&fields.vulkan, 100000);
         let texture_refs: Vec<&Texture> = self.textures.iter().collect();
         batch.set_textures(&texture_refs);
 
         self.batch = Some(batch);
 
-        let width = self.tile_map.width;
-        let height = self.tile_map.height;
+        let mut fbm = Fbm::<Simplex>::new(42);
 
-
-        let mut fbm = Fbm::<Perlin>::new(42);
-
-        fbm.frequency = 0.05;
+        fbm.frequency = 0.02;
         fbm.octaves = 4;
 
-        self.tile_map.set_tiles(|x: usize, y: usize| {
-            if x == 0 || y == 0 || x == width - 1 || y == height - 1 {
-                return TILE_STONE;
+        for x in 0..self.tile_map.width {
+            let noise_val = fbm.get([x as f64, 0.0]) + 0.5;
+            let noise_height = (noise_val * 20.0).round() as usize + 60;
+
+            self.tile_map.set_tile(x, noise_height, TILE_GRASS);
+
+            let dirt_height = max(0, noise_height - 10);
+            for y in dirt_height..noise_height {
+                self.tile_map.set_tile(x, y, TILE_DIRT);
             }
 
-            if x >= 22 && x <= 28 && y >= 22 && y <= 28 {
-                if x == 22 || x == 28 || y == 22 || y == 28 {
-                    return if x == 25 && y == 22 { TILE_DIRT } else { TILE_STONE };
-                }
-                return TILE_PLANKS;
+            let stone_height = max(0, dirt_height);
+            for y in 0..stone_height {
+                self.tile_map.set_tile(x, y, TILE_STONE);
             }
-
-            let noise_val = fbm.get([x as f64, y as f64]);
-
-            if noise_val < -0.2 {
-                TILE_STONE
-            } else if noise_val < 0.3 {
-                TILE_GRASS
-            } else {
-                TILE_DIRT
-            }
-        });
+        }
 
         fbm.octaves = 1;
         fbm.frequency = 0.4;
 
+        let mut min_v = f32::MAX;
+        let mut max_v = f32::MIN;
+
         self.tile_map.set_colors(|x, y| {
             let color_noise = fbm.get([x as f64 * 0.2, y as f64 * 0.2]) as f32;
-            let b = 0.5 + (color_noise * 0.5);
+            let b = color_noise + 0.5;
+            min_v = min_v.min(b);
+            max_v = max_v.max(b);
             [b, b, b, 1.0]
         });
+
+        println!("min: {}, max: {}", min_v, max_v);
+
+        let mut player = Entity::new(1)
+            .with(Box::new(ComponentPosition { x: 500.25, y: -120.0 }));
+
+        let binary_data: Vec<u8> = player.serialize_to_binary();
+
+        println!("Размер бинарных данных: {} байт", binary_data.len());
+        println!("Сырые байты: {:?}", binary_data);
+
+        let loaded_player = Entity::deserialize_from_binary(&binary_data);
+        println!("Сущность успешно загружена! Количество компонентов: {}", loaded_player.components.len());
     }
 
     fn update(&mut self, fields: &mut ContextFields) {
@@ -130,11 +142,13 @@ impl AppAdapter for BlazingFastApp {
         const SCALE_FACTOR: f32 = 1.01;
         const INV_SCALE_FACTOR: f32 = 1.0 / SCALE_FACTOR;
 
-        if input.is_key_pressed(KeyCode::Minus) {
-            self.camera.scale *= SCALE_FACTOR;
+        let scroll = input.scroll_delta.y;
+
+        if input.is_key_pressed(KeyCode::Minus) || scroll < 0.0 {
+            self.camera.scale *= 1.0 + (SCALE_FACTOR - 1.0) * scroll.abs().max(1.0) * 5.0;
         }
-        if input.is_key_pressed(KeyCode::Equal) {
-            self.camera.scale *= INV_SCALE_FACTOR;
+        if input.is_key_pressed(KeyCode::Equal) || scroll > 0.0 {
+            self.camera.scale *= 1.0 - (1.0 - INV_SCALE_FACTOR) * scroll.abs().max(1.0) * 5.0;
         }
 
         if input.is_key_pressed(KeyCode::KeyA)  {
@@ -156,12 +170,17 @@ impl AppAdapter for BlazingFastApp {
             println!("Teleport! New position: {}, {}", self.player_pos.x, self.player_pos.y);
         }
 
-        let camera_glide_dir = self.player_pos.sub(self.camera.position.xy()).mul(0.05);
-        self.camera.position.add_assign(Vec3::new(camera_glide_dir.x, camera_glide_dir.y, 0.0));
+        if input.is_key_down(KeyCode::F11) {
+            fields.toggle_fullscreen();
+        }
 
         if input.is_key_up(KeyCode::Escape) {
             fields.should_close = true;
         }
+
+        // camera gliding
+        let camera_glide_dir = self.player_pos.add(0.5 * TILE_SIZE).sub(self.camera.position.xy()).mul(0.05);
+        self.camera.position.add_assign(Vec3::new(camera_glide_dir.x, camera_glide_dir.y, 0.0));
 
         self.camera.update();
     }
@@ -170,9 +189,15 @@ impl AppAdapter for BlazingFastApp {
         if let Some(batch) = &mut self.batch {
             batch.begin();
 
-            self.tile_map.iter(|x, y, texture_id, color| {
+            self.tile_map.iter(|x, y, tile_id, color| {
+                if tile_id == 0 {
+                    return;
+                }
+
                 let screen_x = x as f32 * TILE_SIZE;
                 let screen_y = y as f32 * TILE_SIZE;
+
+                let texture_id = tile_id - 1;
 
                 batch.draw_quad_c(screen_x, screen_y, TILE_SIZE, TILE_SIZE, texture_id, color);
             });
