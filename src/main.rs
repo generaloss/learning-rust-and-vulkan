@@ -12,6 +12,8 @@ use winit::error::EventLoopError;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use rand::random_range;
+use winit::dpi::Pixel;
+use winit::event::MouseButton;
 use crate::engine::application_context::{ContextBuilder, ContextManager, AppAdapter, ContextFields};
 use crate::engine::camera::CameraOrthographic;
 use crate::engine::sprite_batch::SpriteBatch;
@@ -30,21 +32,31 @@ const TILE_STONE: u32 = 3;
 const TILE_PLANKS: u32 = 4;
 
 fn main() -> Result<(), EventLoopError> {
-    let mut context = ContextBuilder::new()
+    let mut context1 = ContextBuilder::new()
         .title("Blazing Fast Engine")
         .size(1280, 720)
         .icon("assets/icon.png")
         .create();
-    context.set_app(BlazingFastApp::new());
+    context1.set_app(BlazingFastApp::new("win 1".to_string()));
+
+    let mut context2 = ContextBuilder::new()
+        .title("Blazing Fast Engine")
+        .size(1280, 720)
+        .icon("assets/icon.png")
+        .create();
+    context2.set_app(BlazingFastApp::new("win 2".to_string()));
 
     let mut manager = ContextManager::new();
-    manager.register(context);
+    manager.register(context1);
+    manager.register(context2);
     manager.run()?;
 
     Ok(())
 }
 
 struct BlazingFastApp {
+    name: String,
+
     batch: Option<SpriteBatch>,
     textures: Vec<Texture>,
     camera: CameraOrthographic,
@@ -55,8 +67,9 @@ struct BlazingFastApp {
 }
 
 impl BlazingFastApp {
-    fn new() -> Self {
+    fn new(name: String) -> Self {
         Self {
+            name,
             batch: None,
             textures: Vec::new(),
             camera: CameraOrthographic::new(),
@@ -124,6 +137,7 @@ impl AppAdapter for BlazingFastApp {
 
         println!("min: {}, max: {}", min_v, max_v);
 
+        // !!!!! DEBUG !!!!!
         let mut player = Entity::new(1)
             .with(Box::new(ComponentPosition { x: 500.25, y: -120.0 }));
 
@@ -176,6 +190,49 @@ impl AppAdapter for BlazingFastApp {
 
         if input.is_key_up(KeyCode::Escape) {
             fields.should_close = true;
+        }
+
+        if input.is_button_pressed(MouseButton::Left) {
+            let cx = input.position.x as f32;
+            let cy = self.camera.height - input.position.y as f32;
+
+            let scx = (cx - self.camera.width * 0.5) * self.camera.scale.x;
+            let scy = (cy - self.camera.height * 0.5) * self.camera.scale.y;
+
+            let x = scx + self.camera.position.x;
+            let y = scy + self.camera.position.y;
+
+            if x >= 0.0 && y >= 0.0 {
+                let tile_x = (x / TILE_SIZE) as usize;
+                let tile_y = (y / TILE_SIZE) as usize;
+
+                if tile_x < self.tile_map.width && tile_y < self.tile_map.height {
+                    self.tile_map.set_tile(tile_x, tile_y, TILE_STONE);
+                }
+            }
+        }
+        if input.is_button_pressed(MouseButton::Right) {
+            let cx = input.position.x as f32;
+            let cy = self.camera.height - input.position.y as f32;
+
+            let scx = (cx - self.camera.width * 0.5) * self.camera.scale.x;
+            let scy = (cy - self.camera.height * 0.5) * self.camera.scale.y;
+
+            let x = scx + self.camera.position.x;
+            let y = scy + self.camera.position.y;
+
+            if x >= 0.0 && y >= 0.0 {
+                let tile_x = (x / TILE_SIZE) as usize;
+                let tile_y = (y / TILE_SIZE) as usize;
+
+                if tile_x < self.tile_map.width && tile_y < self.tile_map.height {
+                    self.tile_map.set_tile(tile_x, tile_y, 0);
+                }
+            }
+        }
+        // !!!!! DEBUG !!!!!
+        if input.delta.x != 0.0 || input.delta.y != 0.0 {
+            println!("Da-{} {} {}", self.name, input.delta.x, input.delta.y);
         }
 
         // camera gliding

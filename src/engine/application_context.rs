@@ -8,7 +8,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::dpi::{LogicalSize};
 use winit::application::ApplicationHandler;
 use winit::error::EventLoopError;
-use winit::event::{MouseScrollDelta, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::window::WindowId;
 use crate::engine::input::Input;
@@ -209,14 +209,16 @@ impl Context {
 
 pub struct ContextManager {
     contexts: HashMap<WindowId, Context>,
-    pending: Vec<Context>
+    pending: Vec<Context>,
+    focused_window: Option<WindowId>,
 }
 
 impl ContextManager {
     pub fn new() -> Self {
         Self {
             contexts: HashMap::new(),
-            pending: Vec::new()
+            pending: Vec::new(),
+            focused_window: None,
         }
     }
 
@@ -245,6 +247,13 @@ impl ApplicationHandler for ContextManager {
     fn window_event(&mut self, _event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
         if let Some(context) = self.contexts.get_mut(&window_id) {
             match event {
+                WindowEvent::Focused(has_focus) => {
+                    if has_focus {
+                        self.focused_window = Some(window_id);
+                    } else if self.focused_window == Some(window_id) {
+                        self.focused_window = None;
+                    }
+                }
                 WindowEvent::Resized(size) => {
                     context.resize(size.width, size.height);
                 }
@@ -280,27 +289,41 @@ impl ApplicationHandler for ContextManager {
                         }
                     }
                 }
+                WindowEvent::MouseInput { state, button, .. } => {
+                    if let Some(fields) = context.fields.as_mut() {
+                        fields.input.handle_mouse_input_event(button, state);
+                    }
+                }
+                WindowEvent::CursorMoved { position, .. } => {
+                    if let Some(fields) = context.fields.as_mut() {
+                        fields.input.handle_cursor_moved_event(position);
+                    }
+                }
+
                 WindowEvent::MouseWheel { device_id: _, delta, phase: _} => {
                     if let Some(fields) = context.fields.as_mut() {
-                        let (x, y) = match delta {
-                            MouseScrollDelta::LineDelta(line_x, line_y) => (line_x, line_y),
-                            MouseScrollDelta::PixelDelta(physical_pos) => {
-                                let pixels_per_line = 38.0;
-                                (
-                                    (physical_pos.x / pixels_per_line) as f32,
-                                    (physical_pos.y / pixels_per_line) as f32,
-                                )
-                            }
-                        };
-
-                        fields.input.scroll_delta.x += x;
-                        fields.input.scroll_delta.y += y;
+                        fields.input.handle_mouse_wheel_event(delta);
                     }
                 }
                 _ => {}
             }
         }
 
+    }
+
+    fn device_event(&mut self, _event_loop: &ActiveEventLoop, _device_id: DeviceId, event: DeviceEvent, ) {
+        if let Some(window_id) = self.focused_window {
+            if let Some(context) = self.contexts.get_mut(&window_id) {
+                if let Some(fields) = context.fields.as_mut() {
+                    match event {
+                        DeviceEvent::MouseMotion { delta , .. } => {
+                            fields.input.handle_cursor_motion_event(delta);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
