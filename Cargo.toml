@@ -3,6 +3,10 @@ name = "learning-rust-and-vulkan"
 version = "26.4.1-dev"
 edition = "2024"
 
+[lib]
+name = "engine"
+path = "src/lib.rs"
+
 [dependencies]
 winit = "0.30.13"
 vulkano = { version = "0.35.2", features = ["macros"]}

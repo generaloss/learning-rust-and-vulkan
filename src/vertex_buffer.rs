@@ -2,7 +2,7 @@
 
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter};
-use crate::engine::vulkan_context::VulkanContext;
+use crate::vulkan_context::VulkanContext;
 
 pub struct VertexBuffer<V> {
     pub subbuffer: Subbuffer<[V]>,

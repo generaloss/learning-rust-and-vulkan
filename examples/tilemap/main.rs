@@ -1,6 +1,5 @@
 // 'main.rs'
 
-pub mod engine;
 pub mod tilemap;
 pub mod entity;
 
@@ -12,14 +11,13 @@ use winit::error::EventLoopError;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use rand::random_range;
-use winit::dpi::Pixel;
 use winit::event::MouseButton;
-use crate::engine::application_context::{ContextBuilder, ContextManager, AppAdapter, ContextFields};
-use crate::engine::camera::CameraOrthographic;
-use crate::engine::sprite_batch::SpriteBatch;
-use crate::engine::texture::Texture;
-use crate::engine::input::{KeyCode};
-use crate::engine::texture_region::Region;
+use engine::application_context::{ContextBuilder, ContextManager, AppAdapter, ContextFields};
+use engine::camera::CameraOrthographic;
+use engine::sprite_batch::SpriteBatch;
+use engine::texture::Texture;
+use engine::input::{KeyCode};
+use engine::texture_region::Region;
 use crate::entity::{ComponentPosition, Entity};
 use crate::tilemap::Tilemap;
 

@@ -9,7 +9,7 @@ use vulkano::image::sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreate
 use vulkano::image::view::ImageView;
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter};
 use vulkano::sync::GpuFuture;
-use crate::engine::vulkan_context::VulkanContext;
+use crate::vulkan_context::VulkanContext;
 
 pub struct Texture {
     pub image: Arc<Image>,

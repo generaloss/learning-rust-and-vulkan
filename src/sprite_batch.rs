@@ -4,10 +4,10 @@ use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, Standar
 use vulkano::descriptor_set::{DescriptorSet, WriteDescriptorSet, allocator::StandardDescriptorSetAllocator};
 use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition};
 use vulkano::pipeline::Pipeline;
-use crate::engine::vulkan_context::VulkanContext;
-use crate::engine::shader::Shader;
-use crate::engine::texture::Texture;
-use crate::engine::texture_region::Region;
+use crate::vulkan_context::VulkanContext;
+use crate::shader::Shader;
+use crate::texture::Texture;
+use crate::texture_region::Region;
 
 mod v_shader {
     vulkano_shaders::shader! {

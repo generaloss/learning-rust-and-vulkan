@@ -11,7 +11,7 @@ use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
 use vulkano::pipeline::{GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo, Pipeline};
 use vulkano::pipeline::graphics::vertex_input::VertexInputState;
 use vulkano::shader::EntryPoint;
-use crate::engine::vulkan_context::VulkanContext;
+use crate::vulkan_context::VulkanContext;
 
 pub struct Shader {
     pub pipeline: Arc<GraphicsPipeline>,

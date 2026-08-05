@@ -11,8 +11,8 @@ use winit::error::EventLoopError;
 use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::window::WindowId;
-use crate::engine::input::Input;
-use crate::engine::vulkan_context::VulkanContext;
+use crate::input::Input;
+use crate::vulkan_context::VulkanContext;
 
 pub trait AppAdapter {
     fn init(&mut self, context: &mut ContextFields);
