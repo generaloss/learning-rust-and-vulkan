@@ -1,10 +1,10 @@
-// 'main.rs'
+// 'tilemap/main.rs'
 
 pub mod tilemap;
 pub mod entity;
 
 use std::cmp::max;
-use std::ops::{Add, AddAssign, Deref, Mul, Sub};
+use std::ops::{Add, AddAssign, Mul, Sub};
 use glam::{Vec2, Vec3, Vec3Swizzles};
 use noise::{Fbm, NoiseFn, Simplex};
 use winit::error::EventLoopError;
@@ -31,18 +31,18 @@ const TILE_PLANKS: u32 = 4;
 
 fn main() -> Result<(), EventLoopError> {
     let mut context1 = ContextBuilder::new()
-        .title("Blazing Fast Engine")
+        .title("Tilemap Test 1")
         .size(1280, 720)
         .icon("assets/icon.png")
         .create();
-    context1.set_app(BlazingFastApp::new("win 1".to_string()));
+    context1.set_app(TilemapTest::new());
 
     let mut context2 = ContextBuilder::new()
-        .title("Blazing Fast Engine")
+        .title("Tilemap Test 2")
         .size(1280, 720)
         .icon("assets/icon.png")
         .create();
-    context2.set_app(BlazingFastApp::new("win 2".to_string()));
+    context2.set_app(TilemapTest::new());
 
     let mut manager = ContextManager::new();
     manager.register(context1);
@@ -52,9 +52,7 @@ fn main() -> Result<(), EventLoopError> {
     Ok(())
 }
 
-struct BlazingFastApp {
-    name: String,
-
+struct TilemapTest {
     batch: Option<SpriteBatch>,
     textures: Vec<Texture>,
     camera: CameraOrthographic,
@@ -64,10 +62,9 @@ struct BlazingFastApp {
     player_speed: f32,
 }
 
-impl BlazingFastApp {
-    fn new(name: String) -> Self {
+impl TilemapTest {
+    fn new() -> Self {
         Self {
-            name,
             batch: None,
             textures: Vec::new(),
             camera: CameraOrthographic::new(),
@@ -79,7 +76,7 @@ impl BlazingFastApp {
     }
 }
 
-impl AppAdapter for BlazingFastApp {
+impl AppAdapter for TilemapTest {
     fn init(&mut self, fields: &mut ContextFields) {
         self.camera.set_origin(Vec2::splat(0.5));
         self.camera.position.add_assign(Vec3::new(self.player_pos.x + 0.5 * TILE_SIZE, self.player_pos.y + 0.5 * TILE_SIZE, 0.0));
@@ -227,10 +224,6 @@ impl AppAdapter for BlazingFastApp {
                     self.tile_map.set_tile(tile_x, tile_y, 0);
                 }
             }
-        }
-        // !!!!! DEBUG !!!!!
-        if input.delta.x != 0.0 || input.delta.y != 0.0 {
-            println!("Da-{} {} {}", self.name, input.delta.x, input.delta.y);
         }
 
         // camera gliding

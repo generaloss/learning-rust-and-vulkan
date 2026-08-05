@@ -1,4 +1,4 @@
-// 'engine/shader.rs'
+// 'shader.rs'
 
 use std::sync::Arc;
 use vulkano::pipeline::graphics::color_blend::{ColorBlendAttachmentState, ColorBlendState};

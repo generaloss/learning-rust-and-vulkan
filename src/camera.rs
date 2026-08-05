@@ -16,7 +16,6 @@ pub struct CameraPerspective {
     pub view: Mat4,
     pub combined: Mat4,
 
-    pub direction: Vec3,
     pub orientation: Quat,
 }
 
@@ -35,7 +34,6 @@ impl CameraPerspective {
             view: Mat4::IDENTITY,
             combined: Mat4::IDENTITY,
 
-            direction: Vec3::ZERO,
             orientation: Quat::IDENTITY,
         }
     }
@@ -68,6 +66,47 @@ impl CameraPerspective {
 
     fn update_combined(&mut self) {
         self.combined = self.projection * self.view;
+    }
+
+
+    pub fn set_euler_angles(&mut self, yaw_rad: f32, pitch_rad: f32) {
+        let yaw_quat = Quat::from_axis_angle(Vec3::Y, yaw_rad);
+        let pitch_quat = Quat::from_axis_angle(Vec3::X, pitch_rad);
+        self.orientation = yaw_quat * pitch_quat;
+    }
+
+    fn orientation(&self) -> Quat {
+        self.orientation
+    }
+
+    #[inline]
+    pub fn forward(&self) -> Vec3 {
+        self.orientation * Vec3::Z
+    }
+
+    #[inline]
+    pub fn backward(&self) -> Vec3 {
+        -self.forward()
+    }
+
+    #[inline]
+    pub fn right(&self) -> Vec3 {
+        self.orientation * Vec3::X
+    }
+
+    #[inline]
+    pub fn left(&self) -> Vec3 {
+        -self.right()
+    }
+
+    #[inline]
+    pub fn up(&self) -> Vec3 {
+        self.orientation * Vec3::Y
+    }
+
+    #[inline]
+    pub fn down(&self) -> Vec3 {
+        -self.up()
     }
 
 }
