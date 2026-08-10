@@ -1,6 +1,7 @@
 // 'shader.rs'
 
 use std::sync::Arc;
+use vulkano::format::Format;
 use vulkano::pipeline::graphics::color_blend::{ColorBlendAttachmentState, ColorBlendState};
 use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
 use vulkano::pipeline::graphics::multisample::MultisampleState;
@@ -9,6 +10,7 @@ use vulkano::pipeline::graphics::viewport::ViewportState;
 use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
 use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
 use vulkano::pipeline::{GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo, Pipeline};
+use vulkano::pipeline::graphics::depth_stencil::{DepthState, DepthStencilState};
 use vulkano::pipeline::graphics::vertex_input::VertexInputState;
 use vulkano::shader::EntryPoint;
 use crate::vulkan_context::VulkanContext;
@@ -50,11 +52,26 @@ impl Shader {
                 viewport_state: Some(ViewportState::default()),
                 rasterization_state: Some(RasterizationState::default()),
                 multisample_state: Some(MultisampleState::default()),
-                color_blend_state: Some(ColorBlendState::with_attachment_states(1, ColorBlendAttachmentState::default())),
-                dynamic_state: [vulkano::pipeline::DynamicState::Viewport, vulkano::pipeline::DynamicState::Scissor].into_iter().collect(),
+                color_blend_state: Some(ColorBlendState::with_attachment_states(
+                    1,
+                    ColorBlendAttachmentState::default()
+                )),
+
+                // 1. Включаем тест и запись глубины
+                depth_stencil_state: Some(DepthStencilState {
+                    depth: Some(DepthState::simple()), // Сравнение Less (стандартное) и запись включена
+                    ..Default::default()
+                }),
+
+                dynamic_state: [
+                    vulkano::pipeline::DynamicState::Viewport,
+                    vulkano::pipeline::DynamicState::Scissor
+                ].into_iter().collect(),
+
                 subpass: Some(vulkano::pipeline::graphics::subpass::PipelineSubpassType::BeginRendering(
                     vulkano::pipeline::graphics::subpass::PipelineRenderingCreateInfo {
                         color_attachment_formats: vec![Some(vulkan_context.image_format)],
+                        depth_attachment_format: Some(Format::D32_SFLOAT),
                         ..Default::default()
                     }
                 )),

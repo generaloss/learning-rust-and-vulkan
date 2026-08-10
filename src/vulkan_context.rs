@@ -8,12 +8,12 @@ use vulkano::device::physical::{PhysicalDeviceType};
 use vulkano::device::{Device, DeviceCreateInfo, DeviceExtensions, Queue, QueueCreateInfo, QueueFlags, DeviceFeatures};
 use vulkano::format::Format;
 use vulkano::image::view::ImageView;
-use vulkano::image::{Image, ImageUsage};
+use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
 use vulkano::instance::{Instance, InstanceCreateFlags, InstanceCreateInfo};
 use vulkano::swapchain::{Surface, Swapchain, SwapchainCreateInfo, SwapchainPresentInfo, PresentMode, SwapchainAcquireFuture};
 use vulkano::sync::{self, GpuFuture};
 use winit::window::Window;
-use vulkano::memory::allocator::StandardMemoryAllocator;
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
 use vulkano::pipeline::graphics::viewport::Viewport;
 
 pub struct FrameInfo {
@@ -215,6 +215,23 @@ impl VulkanContext {
             CommandBufferUsage::OneTimeSubmit,
         ).unwrap();
 
+        let depth_image = ImageView::new_default(
+            Image::new(
+                self.memory_allocator.clone(),
+                ImageCreateInfo {
+                    image_type: ImageType::Dim2d,
+                    format: Format::D32_SFLOAT,
+                    extent: [window_size.width, window_size.height, 1],
+                    usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT,
+                    ..Default::default()
+                },
+                AllocationCreateInfo {
+                    memory_type_filter: MemoryTypeFilter::PREFER_DEVICE,
+                    ..Default::default()
+                },
+            ).unwrap()
+        ).unwrap();
+
         builder
             .begin_rendering(RenderingInfo {
                 color_attachments: vec![Some(RenderingAttachmentInfo {
@@ -223,6 +240,12 @@ impl VulkanContext {
                     store_op: vulkano::render_pass::AttachmentStoreOp::Store,
                     ..RenderingAttachmentInfo::image_view(self.image_views[image_index as usize].clone())
                 })],
+                depth_attachment: Some(RenderingAttachmentInfo {
+                    load_op: vulkano::render_pass::AttachmentLoadOp::Clear,
+                    store_op: vulkano::render_pass::AttachmentStoreOp::DontCare,
+                    clear_value: Some(1.0.into()),
+                    ..RenderingAttachmentInfo::image_view(depth_image)
+                }),
                 ..Default::default()
             })
             .unwrap();

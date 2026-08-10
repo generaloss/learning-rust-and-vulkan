@@ -81,10 +81,10 @@ impl AppAdapter for TilemapTest {
         self.camera.set_origin(Vec2::splat(0.5));
         self.camera.position.add_assign(Vec3::new(self.player_pos.x + 0.5 * TILE_SIZE, self.player_pos.y + 0.5 * TILE_SIZE, 0.0));
 
-        let grass_texture  = Texture::from_path(&fields.vulkan, "assets/tiles/grass.png");
-        let dirt_texture   = Texture::from_path(&fields.vulkan, "assets/tiles/dirt.png");
-        let stone_texture  = Texture::from_path(&fields.vulkan, "assets/tiles/stone.png");
-        let planks_texture = Texture::from_path(&fields.vulkan, "assets/tiles/planks.png");
+        let grass_texture  = Texture::from_path(&fields.vulkan, "assets/tilemap/grass.png");
+        let dirt_texture   = Texture::from_path(&fields.vulkan, "assets/tilemap/dirt.png");
+        let stone_texture  = Texture::from_path(&fields.vulkan, "assets/tilemap/stone.png");
+        let planks_texture = Texture::from_path(&fields.vulkan, "assets/tilemap/planks.png");
 
         self.textures = vec![grass_texture, dirt_texture, stone_texture, planks_texture];
 

@@ -25,7 +25,7 @@ impl CameraPerspective {
             width: 0.0,
             height: 0.0,
             near: 0.1,
-            far: 100.0,
+            far: 1000.0,
             fov: 90.0,
             
             position: Vec3::ZERO,
@@ -39,11 +39,16 @@ impl CameraPerspective {
     }
 
     pub fn update(&mut self) {
-        let forward = self.orientation * Vec3::Z;
-        let up = self.orientation * Vec3::Y;
-        self.view = Mat4::look_to_lh(self.position, forward, up);
-
+        self.update_view();
         self.update_combined();
+    }
+
+    fn update_view(&mut self) {
+        self.view = Mat4::from_rotation_translation(self.orientation, self.position).inverse();
+    }
+
+    fn update_combined(&mut self) {
+        self.combined = self.projection * self.view;
     }
 
     pub fn resize(&mut self, width: f32, height: f32) {
@@ -55,33 +60,32 @@ impl CameraPerspective {
     fn update_projection(&mut self) {
         let aspect = self.width / self.height;
 
-        self.projection = Mat4::perspective_lh(
+        self.projection = Mat4::perspective_rh(
             self.fov.to_radians(),
             aspect,
             self.near,
             self.far,
         );
+
+        self.projection.y_axis.y *= -1.0;
+
         self.update_combined();
-    }
-
-    fn update_combined(&mut self) {
-        self.combined = self.projection * self.view;
-    }
-
-
-    pub fn set_euler_angles(&mut self, yaw_rad: f32, pitch_rad: f32) {
-        let yaw_quat = Quat::from_axis_angle(Vec3::Y, yaw_rad);
-        let pitch_quat = Quat::from_axis_angle(Vec3::X, pitch_rad);
-        self.orientation = yaw_quat * pitch_quat;
     }
 
     fn orientation(&self) -> Quat {
         self.orientation
     }
 
+    pub fn set_euler_angles(&mut self, yaw_rad: f32, pitch_rad: f32) {
+        let yaw_quat = Quat::from_rotation_y(yaw_rad);
+        let pitch_quat = Quat::from_rotation_x(pitch_rad);
+
+        self.orientation = (yaw_quat * pitch_quat).normalize();
+    }
+
     #[inline]
     pub fn forward(&self) -> Vec3 {
-        self.orientation * Vec3::Z
+        self.orientation * Vec3::NEG_Z
     }
 
     #[inline]
