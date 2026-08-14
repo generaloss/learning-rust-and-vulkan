@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Tilemap Test
+Comment=Rust Vulkan Engine Tilemap Test
+Path=/home/user/Dev/projects/rust/learning-rust-and-vulkan/examples/
+Exec=/home/user/Dev/projects/rust/learning-rust-and-vulkan/target/debug/examples/tilemap
+Icon=/home/user/Dev/projects/rust/learning-rust-and-vulkan/examples/assets/icon.png
+Terminal=false
+Categories=Development;
+StartupWMClass=test_tilemap
+
+# [Положить / создать ссылку на] файл в "~/.local/share/applications/"

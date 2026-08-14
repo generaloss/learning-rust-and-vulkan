@@ -1,7 +1,18 @@
+//! main.rs
+
 pub mod chunk;
+pub mod chunk_mesher;
+pub mod byte_nibble_array;
+pub mod level;
+pub mod chunk_column;
+pub mod sorted_vec;
+pub mod chunk_pos;
+pub mod column_pos;
+pub mod chunk_cache;
 
 use std::sync::Arc;
 use glam::Vec3;
+use noise::{NoiseFn, Perlin};
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
@@ -15,10 +26,13 @@ use winit::window::CursorGrabMode;
 use engine::application_context::{AppAdapter, ContextBuilder, ContextFields, ContextManager};
 use engine::camera::CameraPerspective;
 use engine::input::KeyCode;
+use engine::mesh::MeshIndexed;
 use engine::shader::Shader;
 use engine::texture::Texture;
-use engine::vertex_buffer::VertexBuffer;
-use crate::chunk::Chunk;
+use crate::chunk::{Chunk, SIZE};
+use crate::chunk_mesher::ChunkMesher;
+use crate::chunk_pos::ChunkPos;
+use crate::level::Level;
 
 mod vs {
     vulkano_shaders::shader! {
@@ -29,18 +43,27 @@ mod vs {
             layout(location = 0) in vec3 position;
             layout(location = 1) in vec2 uv;
             layout(location = 2) in uint texture_id;
+            layout(location = 3) in float shade;
 
             layout(location = 0) out vec2 out_uv;
             layout(location = 1) flat out uint out_texture_id;
+            layout(location = 2) out float out_shade;
 
             layout(set = 0, binding = 0) uniform CameraData {
                 mat4 mvp;
             } camera;
 
+            layout(push_constant) uniform PushData {
+                vec3 chunk_offset;
+            } push;
+
             void main() {
-                gl_Position = camera.mvp * vec4(position, 1.0);
+                vec3 world_pos = position + push.chunk_offset;
+
+                gl_Position = camera.mvp * vec4(world_pos, 1.0);
                 out_uv = uv;
                 out_texture_id = texture_id;
+                out_shade = shade;
             }
         "#
     }
@@ -55,6 +78,7 @@ mod fs {
 
             layout(location = 0) in vec2 in_uv;
             layout(location = 1) flat in uint in_texture_id;
+            layout(location = 2) in float in_shade;
 
             layout(location = 0) out vec4 f_color;
 
@@ -62,7 +86,8 @@ mod fs {
             layout(set = 0, binding = 1) uniform sampler2D textures[4];
 
             void main() {
-                f_color = texture(textures[nonuniformEXT(in_texture_id)], in_uv);
+                vec4 tex_color = texture(textures[nonuniformEXT(in_texture_id)], in_uv);
+                f_color = vec4(tex_color.rgb * in_shade, tex_color.a) * vec4(0.7, 0.7, 0.7, 1.0);
             }
         "#
     }
@@ -70,13 +95,15 @@ mod fs {
 
 #[derive(BufferContents, VulkanVertex, Clone, Copy, Debug)]
 #[repr(C)]
-pub struct VoxelVertex {
+pub struct ChunkVertex {
     #[format(R32G32B32_SFLOAT)]
     pub position: [f32; 3],
     #[format(R32G32_SFLOAT)]
     pub uv: [f32; 2],
     #[format(R32_UINT)]
     pub texture_id: u32,
+    #[format(R32_SFLOAT)]
+    pub shade: f32,
 }
 
 #[derive(BufferContents, Clone, Copy, Debug)]
@@ -111,10 +138,8 @@ struct VoxelTest {
     yaw: f32,
     pitch: f32,
 
-    chunk: Chunk,
-    vertex_buffer: Option<VertexBuffer<VoxelVertex>>,
-    index_buffer: Option<Subbuffer<[u32]>>,
-    index_count: u32,
+    level: Level,
+    chunk_mesher: ChunkMesher,
 
     shader: Option<Shader>,
     camera_buffer: Option<Subbuffer<CameraData>>,
@@ -133,10 +158,8 @@ impl VoxelTest {
             yaw: 0.0,
             pitch: 0.0,
 
-            chunk: Chunk::new(),
-            vertex_buffer: None,
-            index_buffer: None,
-            index_count: 0,
+            level: Level::new(),
+            chunk_mesher: ChunkMesher::new(),
 
             shader: None,
             camera_buffer: None,
@@ -147,27 +170,6 @@ impl VoxelTest {
     fn build_pipeline_and_buffers(&mut self, fields: &mut ContextFields) {
         let vulkan = &fields.vulkan;
 
-        let (vertices, indices) = self.chunk.generate_mesh();
-        self.index_count = indices.len() as u32;
-        if vertices.is_empty() { return; }
-
-        self.vertex_buffer = Some(VertexBuffer::new(vulkan, vertices));
-
-        self.index_buffer = Some(
-            Buffer::from_iter(
-                vulkan.memory_allocator.clone(),
-                BufferCreateInfo {
-                    usage: BufferUsage::INDEX_BUFFER,
-                    ..Default::default()
-                },
-                AllocationCreateInfo {
-                    memory_type_filter: MemoryTypeFilter::PREFER_DEVICE | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                    ..Default::default()
-                },
-                indices,
-            ).unwrap()
-        );
-
         // 2. Создаем шейдеры и пайплайн через модуль Shader движка
         let vs = vs::load(vulkan.device.clone()).unwrap();
         let fs = fs::load(vulkan.device.clone()).unwrap();
@@ -175,7 +177,7 @@ impl VoxelTest {
         let vs_entry = vs.entry_point("main").unwrap();
         let fs_entry = fs.entry_point("main").unwrap();
 
-        let vertex_definition = VoxelVertex::per_vertex().definition(&vs_entry).unwrap();
+        let vertex_definition = ChunkVertex::per_vertex().definition(&vs_entry).unwrap();
 
         let shader = Shader::new(vulkan, vs_entry, fs_entry, vertex_definition);
 
@@ -216,6 +218,75 @@ impl VoxelTest {
         self.camera_buffer = Some(camera_buffer);
         self.descriptor_set = Some(descriptor_set);
     }
+
+    fn create_level(&mut self) {
+        // Инициализируем генератор шума (можно передать любой u32 в качестве сида)
+        let perlin = Perlin::new(1337);
+
+        // Масштаб (частота) шума: чем меньше, тем плавнее холмы
+        let scale = 0.03;
+        let base_height = 12.0; // Средняя высота ландшафта
+        let amplitude = 8.0;   // Максимальное отклонение высоты от средней
+
+        // Сетка 10x2x10 чанков
+        for cx in 0..10 {
+            for cy in 0..2 {
+                for cz in 0..10 {
+                    let mut chunk = Chunk::new(ChunkPos::new(cx as i32, cy as i32, cz as i32));
+
+                    for x in 0..SIZE {
+                        for z in 0..SIZE {
+                            // Вычисляем глобальные координаты блока по горизонтали
+                            let world_x = (cx * SIZE + x) as f64;
+                            let world_z = (cz * SIZE + z) as f64;
+
+                            // noise_val вернёт значение в диапазоне [-1.0, 1.0]
+                            let noise_val = perlin.get([world_x * scale, world_z * scale]);
+
+                            // Вычисляем итоговую высоту ландшафта в блоках
+                            let height = (base_height + noise_val * amplitude) as usize;
+
+                            for y in 0..SIZE {
+                                // Глобальная высота Y текущего блока
+                                let world_y = cy * SIZE + y;
+
+                                if world_y == height {
+                                    chunk.blocks.set(x, y, z, 1); // Трава
+                                } else if world_y < height && world_y >= height.saturating_sub(2) {
+                                    chunk.blocks.set(x, y, z, 2); // Грязь
+                                } else if world_y < height.saturating_sub(2) {
+                                    chunk.blocks.set(x, y, z, 3); // Камень
+                                }
+                            }
+                        }
+                    }
+
+                    self.level.put_chunk(chunk);
+                }
+            }
+        }
+    }
+
+    fn build_chunk_meshes(&mut self, fields: &mut ContextFields) {
+        let vulkan = &fields.vulkan;
+
+        let mut generated_meshes = Vec::new();
+
+        self.level.for_each_chunk(|chunk| {
+            let (vertices, indices) = self.chunk_mesher.generate_mesh_vertices(&self.level, chunk);
+
+            if !vertices.is_empty() {
+                let mesh = MeshIndexed::from_data(vulkan, vertices, indices);
+                generated_meshes.push((chunk.pos, mesh));
+            }
+        });
+
+        for (pos, mesh) in generated_meshes {
+            if let Some(chunk) = self.level.get_chunk_mut(pos.x, pos.y, pos.z) {
+                chunk.mesh = Some(mesh);
+            }
+        }
+    }
 }
 
 impl AppAdapter for VoxelTest {
@@ -237,6 +308,8 @@ impl AppAdapter for VoxelTest {
         self.camera.resize(window_size.width as f32, window_size.height as f32);
         self.camera.position = [8.0, 18.0, 24.0].into();
 
+        self.create_level();
+        self.build_chunk_meshes(fields);
         self.build_pipeline_and_buffers(fields);
     }
 
@@ -289,15 +362,8 @@ impl AppAdapter for VoxelTest {
     }
 
     fn render(&mut self, _fields: &mut ContextFields, builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) {
-        if self.index_count == 0 { return; }
-
-        if let (Some(v_buffer), Some(i_buffer), Some(shader), Some(ds)) = (
-            &self.vertex_buffer,
-            &self.index_buffer,
-            &self.shader,
-            &self.descriptor_set,
-        ) {
-            // Привязываем пайплайн, дескриптор сет и буферы геометрии
+        if let (Some(shader), Some(ds)) = (&self.shader, &self.descriptor_set) {
+            // 1. Привязываем тяжёлое состояние (шейдер/пайплайн и текстуры с камерой) ОДИН раз
             builder
                 .bind_pipeline_graphics(shader.pipeline.clone())
                 .unwrap()
@@ -307,17 +373,43 @@ impl AppAdapter for VoxelTest {
                     0,
                     ds.clone(),
                 )
-                .unwrap()
-                .bind_vertex_buffers(0, v_buffer.subbuffer.clone())
-                .unwrap()
-                .bind_index_buffer(i_buffer.clone())
                 .unwrap();
 
-            unsafe {
-                builder
-                    .draw_indexed(self.index_count, 1, 0, 0, 0)
-                    .unwrap();
-            }
+            // 2. Итерируемся по всем чанкам в векторе
+            self.level.for_each_chunk_mut(|chunk| {
+                if let Some(mesh) = &chunk.mesh {
+                    let index_count = mesh.index_buffer.len();
+
+                    // Пропускаем пустые меши (например, полностью воздушные чанки)
+                    if index_count == 0 {
+                        return;
+                    }
+
+                    let push_data = vs::PushData {
+                        chunk_offset: [
+                            chunk.pos.block_x() as f32,
+                            chunk.pos.block_y() as f32,
+                            chunk.pos.block_z() as f32,
+                        ]
+                    };
+
+                    // 3. Быстро перепривязываем только геометрию текущего чанка
+                    builder
+                        .push_constants(shader.layout().clone(), 0, push_data)
+                        .unwrap()
+                        .bind_vertex_buffers(0, mesh.vertex_buffer.clone().into_subbuffer())
+                        .unwrap()
+                        .bind_index_buffer(mesh.index_buffer.clone().into_subbuffer())
+                        .unwrap();
+
+                    // 4. Отрисовываем чанк
+                    unsafe {
+                        builder
+                            .draw_indexed(index_count, 1, 0, 0, 0)
+                            .unwrap();
+                    }
+                }
+            });
         }
     }
 

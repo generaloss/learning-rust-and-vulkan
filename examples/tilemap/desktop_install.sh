@@ -1,0 +1,1 @@
+ln ./desktop.txt ~/.local/share/applications/test_tilemap.desktop

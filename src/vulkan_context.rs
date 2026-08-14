@@ -208,13 +208,7 @@ impl VulkanContext {
         // Беру реальный размер текстур текущего свопчейна, а не окна winit!
         let swapchain_extent = self.swapchain.image_extent();
 
-        // 2. Билдим команды
-        let mut builder = AutoCommandBufferBuilder::primary(
-            self.cb_allocator.clone(),
-            self.queue.queue_family_index(),
-            CommandBufferUsage::OneTimeSubmit,
-        ).unwrap();
-
+        // depth
         let depth_image = ImageView::new_default(
             Image::new(
                 self.memory_allocator.clone(),
@@ -230,6 +224,13 @@ impl VulkanContext {
                     ..Default::default()
                 },
             ).unwrap()
+        ).unwrap();
+
+        // 2. Билдим команды
+        let mut builder = AutoCommandBufferBuilder::primary(
+            self.cb_allocator.clone(),
+            self.queue.queue_family_index(),
+            CommandBufferUsage::OneTimeSubmit,
         ).unwrap();
 
         builder
